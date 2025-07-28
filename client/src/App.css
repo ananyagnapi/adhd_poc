@@ -1,0 +1,287 @@
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #f0f2f5;
+  color: #333;
+  margin: 0;
+  padding: 20px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start; /* Align to top */
+  min-height: 100vh; /* Full viewport height */
+  box-sizing: border-box;
+}
+
+.app-container {
+  background-color: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+  padding: 30px;
+  max-width: 900px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 25px;
+  position: relative;
+}
+
+h1 {
+  color: #2c3e50;
+  text-align: center;
+  margin-bottom: 25px;
+  font-size: 2.2em;
+}
+
+.avatar-section {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 20px;
+  background-color: #e8f5e9; /* Light green background */
+  border-radius: 10px;
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.05);
+}
+
+.avatar {
+  width: 220px; /* Size of your Lottie avatar */
+  height: 320px;
+  min-width: 120px; /* Ensure it doesn't shrink */
+  /* border-radius: 50%; */
+  overflow: hidden; /* To keep the Lottie within circular bounds if needed */
+  /* background-color: #d4edda; Slightly darker green */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.assistant-dialogue {
+  flex-grow: 1;
+  background-color: #ffffff;
+  padding: 15px 20px;
+  border-radius: 8px;
+  border: 1px solid #c8e6c9;
+  font-size: 1.1em;
+  color: #388e3c; /* Green text for assistant */
+  line-height: 1.5;
+}
+
+.interaction-area {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.start-form-section {
+  text-align: center;
+  padding: 30px;
+  background-color: #f7f9fc;
+  border-radius: 10px;
+  border: 1px dashed #ced4da;
+}
+
+.question-display {
+  background-color: #fdfdfd;
+  border: 1px solid #ddd;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.03);
+}
+
+.question-display h2 {
+  color: #4a69bd; /* Blue for question title */
+  margin-top: 0;
+  margin-bottom: 10px;
+  font-size: 1.4em;
+}
+
+.question-display p {
+  font-size: 1.2em;
+  line-height: 1.6;
+  color: #555;
+}
+
+.user-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.button-group {
+  display: flex;
+  flex-wrap: wrap; /* Allow buttons to wrap */
+  gap: 10px;
+  justify-content: center;
+}
+
+button {
+  background-color: #6a89cc; /* Primary blue */
+  color: white;
+  border: none;
+  padding: 12px 25px;
+  border-radius: 25px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+  flex-shrink: 0; /* Prevent buttons from shrinking too much */
+}
+
+button:hover:not(:disabled) {
+  background-color: #4a69bd;
+  transform: translateY(-2px);
+}
+
+button:disabled {
+  background-color: #aebfd9;
+  cursor: not-allowed;
+}
+
+.text-input-section {
+  display: flex;
+  gap: 10px;
+}
+
+.text-input-section input[type="text"] {
+  flex-grow: 1;
+  padding: 12px 15px;
+  border: 1px solid #ccc;
+  border-radius: 25px;
+  font-size: 1em;
+  outline: none;
+  transition: border-color 0.3s ease;
+}
+
+.text-input-section input[type="text"]:focus {
+  border-color: #6a89cc;
+  box-shadow: 0 0 0 3px rgba(106, 137, 204, 0.2);
+}
+
+.user-transcript {
+  font-style: italic;
+  color: #666;
+  text-align: center;
+  margin-top: 10px;
+}
+
+.confirmation-section {
+  background-color: #fff3cd; /* Light yellow background */
+  border: 1px solid #ffeeba;
+  padding: 15px;
+  border-radius: 10px;
+  text-align: center;
+}
+
+.confirmation-prompt {
+  margin-bottom: 15px;
+  font-size: 1.1em;
+  color: #856404; /* Dark yellow text */
+}
+
+.confirmation-section .button-group button {
+  background-color: #28a745; /* Green for confirm */
+}
+
+.confirmation-section .button-group button:hover:not(:disabled) {
+  background-color: #218838;
+}
+
+.confirmation-section .button-group button:last-child {
+  background-color: #dc3545; /* Red for deny/try again */
+}
+
+.confirmation-section .button-group button:last-child:hover:not(:disabled) {
+  background-color: #c82333;
+}
+
+.saved-responses-section {
+  background-color: #e6f7ff; /* Light blue background */
+  border: 1px solid #bae0ff;
+  padding: 20px;
+  border-radius: 10px;
+  margin-top: 25px;
+}
+
+.saved-responses-section h3 {
+  color: #0056b3;
+  margin-top: 0;
+  margin-bottom: 15px;
+  font-size: 1.3em;
+}
+
+.saved-responses-section ul {
+  list-style-type: none;
+  padding: 0;
+  max-height: 200px; /* Limit height for long lists */
+  overflow-y: auto; /* Enable scrolling if too many responses */
+  margin-bottom: 15px;
+}
+
+.saved-responses-section li {
+  background-color: #f0faff;
+  border: 1px solid #d4efff;
+  padding: 10px 15px;
+  margin-bottom: 8px;
+  border-radius: 5px;
+  font-size: 0.95em;
+  line-height: 1.4;
+  word-wrap: break-word; /* Ensure long text wraps */
+}
+
+.saved-responses-section button {
+  background-color: #6c757d; /* Grey for clear button */
+  margin-top: 10px;
+}
+
+.saved-responses-section button:hover:not(:disabled) {
+  background-color: #5a6268;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .app-container {
+    padding: 20px;
+    margin: 10px;
+  }
+
+  h1 {
+    font-size: 1.8em;
+  }
+
+  .avatar-section {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .avatar {
+    margin-bottom: 10px;
+  }
+
+  .text-input-section {
+    flex-direction: column;
+  }
+
+  .text-input-section button {
+    width: 100%;
+  }
+
+  .button-group button {
+    flex-grow: 1; /* Allow buttons to expand to fill space more on small screens */
+  }
+}
+
+@media (max-width: 480px) {
+  .app-container {
+    padding: 15px;
+  }
+
+  h1 {
+    font-size: 1.5em;
+  }
+
+  .assistant-dialogue {
+    font-size: 1em;
+    padding: 10px 15px;
+  }
+
+  .question-display p {
+    font-size: 1em;
+  }
+}
