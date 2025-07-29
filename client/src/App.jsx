@@ -2,17 +2,18 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Lottie from 'lottie-react';
 import './App.css';
 
-// Ensure you have an 'avatar.json' file in your 'src/assets/' folder
-// You can download Lottie JSON files from LottieFiles.com
-import avatarAnimation from './assets/avatar.json';
+// Import your avatar JSON files
+import avatar1 from './assets/avatar.json'; // Default or generic avatar
+import avatar2 from './assets/FemaleAvatar.json'; // Female avatar
+import avatar3 from './assets/male.json';     // Male avatar
 
-// Backend URL
-const API_BASE_URL = 'http://localhost:3001/api'; // Make sure this matches your backend port
+const API_BASE_URL = 'http://localhost:3001/api';
 
-// --- Animated Avatar Component ---
-const Avatar = ({ talking, listening }) => {
+// --- Animated Avatar Component (Updated to accept animationData prop) ---
+const Avatar = ({ talking, listening, animationData }) => {
   const lottieRef = useRef();
 
+  // This useEffect ensures the Lottie animation speed changes based on state
   useEffect(() => {
     if (lottieRef.current) {
       if (talking) {
@@ -32,7 +33,7 @@ const Avatar = ({ talking, listening }) => {
     <div className="avatar">
       <Lottie
         lottieRef={lottieRef}
-        animationData={avatarAnimation}
+        animationData={animationData} // Use the prop here
         loop={true}
         autoplay={true}
         style={{ width: '100%', height: '100%' }}
@@ -43,39 +44,32 @@ const Avatar = ({ talking, listening }) => {
 
 // --- Main App Component ---
 function App() {
-  // State variables for managing UI and conversation flow
   const [currentQuestion, setCurrentQuestion] = useState("");
-  const [assistantMessage, setAssistantMessage] = useState("Click 'Start Form' to begin the questionnaire.");
-  const [userTranscript, setUserTranscript] = useState(""); // Stores what the speech recognition heard
-  const [isListening, setIsListening] = useState(false); // Tracks if speech recognition is active
-  const [isSpeaking, setIsSpeaking] = useState(false); // Tracks if speech synthesis is active
-  const [userInputText, setUserInputText] = useState(""); // Stores manual text input
-  // Removed showConfirmation state as we are handling via voice
-  // const [showConfirmation, setShowConfirmation] = useState(false);
-  const [predictedOption, setPredictedOption] = useState(""); // The predicted answer option (e.g., "Often")
-  const [storedResponses, setStoredResponses] = useState({}); // Stores user answers to questions
-  const [formStarted, setFormStarted] = useState(false); // Controls if the form conversation has begun
-  const [sessionId, setSessionId] = useState(null); // New state for session ID from backend
-  const [currentQuestionData, setCurrentQuestionData] = useState(null); // Stores {id, question} of current question
-  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false); // New state to track if we're waiting for 'yes'/'no' confirmation
+  // MODIFIED: Initial message
+  const [assistantMessage, setAssistantMessage] = useState("Select an avatar to continue.");
+  const [userTranscript, setUserTranscript] = useState("");
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [userInputText, setUserInputText] = useState("");
+  const [predictedOption, setPredictedOption] = useState("");
+  const [storedResponses, setStoredResponses] = useState({});
+  const [formStarted, setFormStarted] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [currentQuestionData, setCurrentQuestionData] = useState(null);
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
+  const [selectedAvatar, setSelectedAvatar] = useState(null);
 
-  // Refs for Web Speech API instances
-  const synth = useRef(window.speechSynthesis); // SpeechSynthesisUtterance API
-  const recognitionRef = useRef(null); // SpeechRecognition API
-  const currentUtteranceRef = useRef(null); // Reference to the currently speaking utterance
-
-  // Ref to ensure useEffect runs only once on mount
+  const synth = useRef(window.speechSynthesis);
+  const recognitionRef = useRef(null);
+  const currentUtteranceRef = useRef(null);
   const isMounted = useRef(false);
 
-  // --- ORDER OF FUNCTIONS MATTERS HERE ---
-
-  // 1. speakText: Has no dependencies on other useCallback functions here
   const speakText = useCallback((textToSpeak, onEndCallback = null) => {
     console.log("speakText called:", textToSpeak);
     if (!textToSpeak) { if (onEndCallback) onEndCallback(); return; }
     if (synth.current.speaking) {
       console.log("Cancelling ongoing speech to make way for new speech.");
-      synth.current.cancel(); // Cancel any existing speech
+      synth.current.cancel();
     }
 
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
@@ -88,48 +82,40 @@ function App() {
       setIsSpeaking(false);
       console.log("SpeechSynthesis: Speaking ended. Calling onEndCallback.");
       if (onEndCallback) {
-        onEndCallback(); // Execute callback ONLY after speech truly ends
+        onEndCallback();
       }
     };
     utterance.onerror = (event) => {
       console.error('Speech synthesis error:', event.error, 'for text:', textToSpeak);
       setIsSpeaking(false);
-      // Even on error, still try to call callback to not block the flow
       if (onEndCallback) { onEndCallback(); }
     };
 
     currentUtteranceRef.current = utterance;
     synth.current.speak(utterance);
-  }, []); // No dependencies for speakText itself
+  }, []);
 
-
-  // 3. stopListening: Simple function, no dependencies on other useCallback functions
   const stopListening = useCallback(() => {
     if (recognitionRef.current && isListening) {
       recognitionRef.current.stop();
-      setIsListening(false); // Make sure to set false when stopped
+      setIsListening(false);
       console.log("SpeechRecognition: Stopped listening.");
     }
   }, [isListening]);
 
-
-  // 4. sendToBackend: Depends on speakText, startListening, but actions are coordinated via speakText's callback
   const sendToBackend = useCallback(async (message, actionType, confirmedOption = null, overrideSessionId = null) => {
-
     const currentSessionId = overrideSessionId || sessionId;
-    if (!currentSessionId) {
+    if (!currentSessionId && actionType !== 'init_questionnaire') {
       console.error("No session ID. Cannot send message to backend.");
       setAssistantMessage("Please start the form first to get a session ID.");
       speakText("Please start the form first to get a session ID.");
       return;
     }
 
-    // Set speaking to true to block user input/listening until assistant responds
     setIsSpeaking(true);
-    setIsListening(false); // Stop listening if it was active
-    setUserInputText(""); // Clear input field
-    setUserTranscript(""); // Clear transcript
-    // Removed setShowConfirmation(false);
+    setIsListening(false);
+    setUserInputText("");
+    setUserTranscript("");
 
     try {
       const payload = {
@@ -138,15 +124,13 @@ function App() {
         action: actionType,
         currentQuestionId: currentQuestionData?.id,
         confirmedOption: confirmedOption,
-        awaitingConfirmation: awaitingConfirmation // Pass this state to backend
+        awaitingConfirmation: awaitingConfirmation
       };
       console.log("Sending payload to backend:", payload);
 
       const response = await fetch(`${API_BASE_URL}/chat`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
@@ -157,24 +141,19 @@ function App() {
       const data = await response.json();
       console.log("Received data from backend:", data);
 
-      // Normalize assistantMessage and action if they are arrays from Gemini's response
       const normalizedAssistantMessage = Array.isArray(data.assistantMessage) ? data.assistantMessage[0] : data.assistantMessage;
       const normalizedAction = Array.isArray(data.action) ? data.action[0] : data.action;
 
       setAssistantMessage(normalizedAssistantMessage);
 
-      // Crucially, all state updates for the next interaction phase happen INSIDE this callback
       speakText(normalizedAssistantMessage, () => {
-        // Reset awaitingConfirmation after the assistant has spoken its response
-        if (awaitingConfirmation && normalizedAction !== 'confirm_answer') { // If it's still confirming, keep it true
+        if (awaitingConfirmation && normalizedAction !== 'confirm_answer') {
             setAwaitingConfirmation(false);
         }
 
-        // Handle actions based on backend's response (using normalizedAction)
         if (normalizedAction === 'ask_readiness') {
           setCurrentQuestion("");
           setCurrentQuestionData(null);
-          // Start listening for readiness confirmation
           if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
             recognitionRef.current.startListeningDirectly();
           }
@@ -182,34 +161,30 @@ function App() {
           console.log("Frontend: Action is 'ask_question' or 're_ask'. Setting question to:", data.nextQuestion);
           setCurrentQuestion(data.nextQuestion);
           setCurrentQuestionData({ id: data.questionId, question: data.nextQuestion });
-          // Only start listening if it's an 'ask_question' or 're_ask'
           if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
             recognitionRef.current.startListeningDirectly();
           }
         } else if (normalizedAction === 'confirm_answer' && data.predictedOption) {
           setPredictedOption(data.predictedOption);
-          setAwaitingConfirmation(true); // Now we are waiting for a 'yes' or 'no'
-          // Start listening immediately for confirmation
+          setAwaitingConfirmation(true);
           if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
             recognitionRef.current.startListeningDirectly();
           }
         } else if (normalizedAction === 'complete') {
           setCurrentQuestion("Questionnaire complete.");
-          setFormStarted(false); // Disable further input
-          setSessionId(null); // Clear session ID as conversation is complete
-        } else if (normalizedAction === 'clarify') { // Clarify for questions or readiness
+          setFormStarted(false);
+          setSessionId(null);
+        } else if (normalizedAction === 'clarify') {
             if (currentQuestionData) {
-                setCurrentQuestion(currentQuestionData.question); // Re-set current question in UI
-            } else if (!currentQuestionData && formStarted) { // If in readiness phase and clarify
-                setCurrentQuestion(""); // No question yet, just a prompt to re-ask for readiness
+                setCurrentQuestion(currentQuestionData.question);
+            } else if (!currentQuestionData && formStarted) {
+                setCurrentQuestion("");
             }
-            // If clarify, always try to listen again after the message
             if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
                 recognitionRef.current.startListeningDirectly();
             }
         } else {
           console.warn("Unhandled action from backend:", normalizedAction);
-          // Default to re-enable listening if not specifically handled
           if (currentQuestionData) {
             setCurrentQuestion(currentQuestionData.question);
           }
@@ -218,18 +193,16 @@ function App() {
           }
         }
 
-        // Always update stored responses based on what backend sends back (if provided)
         if (data.responses) {
           setStoredResponses(data.responses);
           localStorage.setItem('userQuestionnaireResponses', JSON.stringify(data.responses));
         }
-      }); // End of speakText callback
+      });
 
     } catch (error) {
       console.error("Error communicating with backend:", error);
       setAssistantMessage("I'm sorry, I couldn't connect right now. Please check your internet connection and the backend server. Error: " + error.message);
       speakText("I'm sorry, I couldn't connect right now. Please check your internet connection and the backend server.", () => {
-        // Attempt to restart listening if connection lost, assuming current question is still relevant
         if (!isListening && currentQuestion) {
           if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
             setTimeout(recognitionRef.current.startListeningDirectly, 2000);
@@ -237,19 +210,15 @@ function App() {
         }
       });
       setIsSpeaking(false);
-      // Removed setShowConfirmation(false);
     }
-  }, [sessionId, speakText, currentQuestionData, isListening, currentQuestion, setAssistantMessage, setStoredResponses, setUserTranscript, awaitingConfirmation]); // Added awaitingConfirmation to dependencies
+  }, [sessionId, speakText, currentQuestionData, isListening, currentQuestion, setAssistantMessage, setStoredResponses, setUserTranscript, awaitingConfirmation]);
 
-
-  // 2. startListening: This is where you trigger the recognition start
-  // This must be defined BEFORE initializeSpeechRecognition because it's used there.
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening && !isSpeaking) {
       recognitionRef.current.start();
       setIsListening(true);
       setAssistantMessage("Listening for your response...");
-      setUserTranscript(""); // Clear transcript on new listening start
+      setUserTranscript("");
       console.log("SpeechRecognition: Started listening.");
     } else if (isSpeaking) {
       setAssistantMessage("I'm speaking, please wait.");
@@ -258,8 +227,6 @@ function App() {
     }
   }, [isListening, isSpeaking, setUserTranscript, setAssistantMessage]);
 
-
-  // 5. initializeSpeechRecognition: Returns the recognition object.
   const initializeSpeechRecognition = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -275,7 +242,6 @@ function App() {
 
     recognition.onresult = (event) => {
       const transcript = Array.from(event.results).map(result => result[0].transcript).join('');
-      // Store the transcript in a ref to be processed on `onend`
       if (recognitionRef.current) {
         recognitionRef.current.lastTranscript = transcript;
       }
@@ -294,22 +260,19 @@ function App() {
 
       if (recognitionRef.current && recognitionRef.current.lastTranscript) {
         const transcript = recognitionRef.current.lastTranscript;
-        setUserTranscript(transcript); // Update UI state with final transcript
+        setUserTranscript(transcript);
 
-        // Determine action based on current state (waiting for readiness or an answer OR confirmation)
-        let actionToSend = 'answer'; // Default for questions
+        let actionToSend = 'answer';
         if (!currentQuestionData && formStarted && !awaitingConfirmation) {
-          actionToSend = 'confirm_readiness'; // If no question and form started, it's readiness phase
+          actionToSend = 'confirm_readiness';
         } else if (awaitingConfirmation) {
-          actionToSend = 'confirm_answer_verbal'; // New action type for verbal confirmation
+          actionToSend = 'confirm_answer_verbal';
         }
 
         console.log("Frontend: SpeechRecognition.onend -> Sending action:", actionToSend, "with transcript:", transcript);
         sendToBackend(transcript, actionToSend);
-        recognitionRef.current.lastTranscript = null; // Clear after use
+        recognitionRef.current.lastTranscript = null;
       } else {
-        // If onend fires but no transcript was captured (e.g., silence),
-        // re-enable listening or prompt user.
         setAssistantMessage("I didn't catch that. Can you please repeat or type your answer?");
         speakText("I didn't catch that. Can you please repeat or type your answer?", () => {
           if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
@@ -320,12 +283,16 @@ function App() {
     };
 
     return recognition;
-  }, [sendToBackend, currentQuestionData, formStarted, setUserTranscript, setIsListening, setAssistantMessage, speakText, awaitingConfirmation]); // Added awaitingConfirmation to dependencies
+  }, [sendToBackend, currentQuestionData, formStarted, setUserTranscript, setIsListening, setAssistantMessage, speakText, awaitingConfirmation]);
 
-
-  // 6. startConversation: Depends on speakText and sendToBackend
   const startConversation = useCallback(async () => {
-    setFormStarted(true); // Indicate form process has started
+    if (!selectedAvatar) {
+      setAssistantMessage("Please select an avatar before starting the form.");
+      speakText("Please select an avatar before starting the form.");
+      return;
+    }
+
+    setFormStarted(true);
     setAssistantMessage("Hello! I'm initiating the session...");
     speakText("Hello! I'm initiating the session...");
 
@@ -339,10 +306,7 @@ function App() {
       setSessionId(newSessionId);
       console.log("Session started with ID:", newSessionId);
 
-      // Now that session is started, send initial message to get the intro + readiness question
       setAssistantMessage("Session started. Getting introduction...");
-      // Pass the newSessionId to sendToBackend for the initial prompt
-      // The subsequent speakText and listening will be handled by sendToBackend's callback
       await sendToBackend("initiate", "init_questionnaire", null, newSessionId);
 
     } catch (error) {
@@ -351,19 +315,14 @@ function App() {
       speakText("Could not start the form. Please try again.");
       setFormStarted(false);
     }
-  }, [speakText, sendToBackend]);
+  }, [speakText, sendToBackend, selectedAvatar]);
 
-
-  // handleConfirm is no longer needed in its previous form, as confirmation is now verbal.
-  // We will handle the "yes/no" logic directly in the backend and App.js's sendToBackend's 'confirm_answer_verbal' action.
-
-  // 8. handleAskForExplanation: Depends on stopListening, currentQuestionData, sendToBackend, speakText
   const handleAskForExplanation = useCallback(() => {
     if (isListening) { stopListening(); }
-    if (currentQuestionData) { // Ensure there's a current question to explain
+    if (currentQuestionData) {
       setAssistantMessage("Getting explanation...");
       speakText("Getting explanation...", () => {
-        sendToBackend("explain current question", "explain"); // Send intent to backend AFTER "Getting explanation..." is spoken
+        sendToBackend("explain current question", "explain");
       });
     } else {
       setAssistantMessage("No question is currently active for explanation.");
@@ -371,40 +330,37 @@ function App() {
     }
   }, [isListening, stopListening, currentQuestionData, sendToBackend, speakText, setAssistantMessage]);
 
-
-  // 9. handleManualSubmit: Depends on sendToBackend
   const handleManualSubmit = useCallback(() => {
     if (userInputText.trim() === "") { setAssistantMessage("Please type your response."); return; }
-    // Determine action based on current state (waiting for readiness or an answer OR confirmation)
-    let actionToSend = 'answer'; // Default for questions
+    let actionToSend = 'answer';
     if (!currentQuestionData && formStarted && !awaitingConfirmation) {
       actionToSend = 'confirm_readiness';
     } else if (awaitingConfirmation) {
-      actionToSend = 'confirm_answer_verbal'; // New action type for verbal confirmation
+      actionToSend = 'confirm_answer_verbal';
     }
     console.log("Frontend: handleManualSubmit -> Sending action:", actionToSend, "with message:", userInputText);
     sendToBackend(userInputText, actionToSend);
-  }, [userInputText, sendToBackend, setAssistantMessage, currentQuestionData, formStarted, awaitingConfirmation]); // Added awaitingConfirmation
+  }, [userInputText, sendToBackend, setAssistantMessage, currentQuestionData, formStarted, awaitingConfirmation]);
 
-
-  // 10. handleStartListening: Simple wrapper around startListening
   const handleStartListening = useCallback(() => {
     if (isSpeaking && currentUtteranceRef.current) { synth.current.cancel(); }
     startListening();
   }, [isSpeaking, startListening]);
 
+  // NEW useEffect to update assistant message when avatar is selected
+  useEffect(() => {
+    if (selectedAvatar && !formStarted) { // Only update if an avatar is selected and form hasn't started
+      setAssistantMessage("Click 'Start Form' to begin the questionnaire.");
+    }
+  }, [selectedAvatar, formStarted]); // Rerun when selectedAvatar or formStarted changes
 
-  // useEffect hook for initial setup and cleanup
   useEffect(() => {
     if (isMounted.current) { return; }
     isMounted.current = true;
 
-    // 1. Initialize SpeechRecognition object.
     const recognitionInstance = initializeSpeechRecognition();
     recognitionRef.current = recognitionInstance;
 
-    // 2. Assign the startListening callback to a property on the recognition object.
-    // This allows the onend callback of recognition to directly call startListening.
     if (recognitionRef.current) {
         recognitionRef.current.startListeningDirectly = startListening;
     }
@@ -423,33 +379,59 @@ function App() {
     };
   }, [initializeSpeechRecognition, isListening, startListening]);
 
-
-  // Main component render
   return (
     <div className="app-container">
       <h1>ADHD Form Assistant</h1>
 
       <div className="avatar-section">
-        <Avatar
-          talking={isSpeaking}
-          listening={isListening}
-        />
+        {selectedAvatar && (
+          <Avatar
+            talking={isSpeaking}
+            listening={isListening}
+            animationData={selectedAvatar}
+          />
+        )}
         <div className="assistant-dialogue">
           <p>{assistantMessage}</p>
         </div>
       </div>
 
       <div className="interaction-area">
-        {/* "Start Form" button, visible only before the form begins */}
         {!formStarted && (
           <div className="start-form-section">
-            <button onClick={startConversation} disabled={isSpeaking || sessionId !== null}>
+            <h2>Select Your Avatar</h2>
+            <div className="avatar-selection" style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
+              {[avatar1, avatar2, avatar3].map((avatar, index) => (
+                <div
+                  key={index}
+                  className={`avatar-option ${selectedAvatar === avatar ? 'selected' : ''}`}
+                  onClick={() => setSelectedAvatar(avatar)}
+                  style={{
+                    cursor: 'pointer',
+                    width: '150px',
+                    height: '150px',
+                    margin: '0 10px',
+                    border: selectedAvatar === avatar ? '3px solid #007bff' : '3px solid transparent',
+                    borderRadius: '10px',
+                    overflow: 'hidden',
+                    backgroundColor: '#f0f0f0',
+                    boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
+                    transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
+                  }}
+                >
+                  <Lottie animationData={avatar} loop autoplay style={{ width: '100%', height: '100%' }} />
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={startConversation}
+              disabled={!selectedAvatar || isSpeaking || sessionId !== null}
+            >
               Start Form
             </button>
           </div>
         )}
 
-        {/* Main form interaction area, visible only after the form has started */}
         {formStarted && (
           <>
             <div className="question-display">
@@ -457,7 +439,6 @@ function App() {
               <p>{currentQuestion || "Please wait for the assistant to ask something..."}</p>
             </div>
 
-            {/* Controls are always visible if formStarted, but some disabled based on currentQuestion for clarity */}
             <div className="user-controls">
               <div className="button-group">
                 <button onClick={handleStartListening} disabled={isListening || isSpeaking}>
@@ -466,7 +447,6 @@ function App() {
                 <button onClick={stopListening} disabled={!isListening}>
                   Stop Listening
                 </button>
-                {/* Enable explain button only if a question is currently active */}
                 <button onClick={handleAskForExplanation} disabled={isSpeaking || isListening || !currentQuestionData}>
                   Repeat Question
                 </button>
@@ -488,32 +468,10 @@ function App() {
               {userTranscript && (
                 <p className="user-transcript">You said: "<em>{userTranscript}</em>"</p>
               )}
-
-              {/* REMOVED: Confirmation UI section */}
-              {/* {showConfirmation && (
-                <div className="confirmation-section">
-                  <p className="confirmation-prompt">Did you mean: "<strong>{predictedOption}</strong>"?</p>
-                  <div className="button-group">
-                    <button onClick={() => handleConfirm(predictedOption)}>Yes, that's correct</button>
-                    <button onClick={() => {
-                      setAssistantMessage("Okay, please try speaking or typing your answer again.");
-                      speakText("Okay, please try speaking or typing your answer again.", () => {
-                        if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-                          recognitionRef.current.startListeningDirectly(); // Re-enable listening after prompt
-                        }
-                      });
-                      setShowConfirmation(false);
-                      setUserTranscript("");
-                      setUserInputText("");
-                    }}>No, let me try again</button>
-                  </div>
-                </div>
-              )} */}
             </div>
           </>
         )}
 
-        {/* Section to display and clear saved responses */}
         {Object.keys(storedResponses).length > 0 && (
           <div className="saved-responses-section">
             <h3>Saved Responses:</h3>
