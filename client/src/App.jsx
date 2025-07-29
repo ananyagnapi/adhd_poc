@@ -50,12 +50,14 @@ function App() {
   const [isListening, setIsListening] = useState(false); // Tracks if speech recognition is active
   const [isSpeaking, setIsSpeaking] = useState(false); // Tracks if speech synthesis is active
   const [userInputText, setUserInputText] = useState(""); // Stores manual text input
-  const [showConfirmation, setShowConfirmation] = useState(false); // Controls visibility of "Did you mean?" section
+  // Removed showConfirmation state as we are handling via voice
+  // const [showConfirmation, setShowConfirmation] = useState(false);
   const [predictedOption, setPredictedOption] = useState(""); // The predicted answer option (e.g., "Often")
   const [storedResponses, setStoredResponses] = useState({}); // Stores user answers to questions
   const [formStarted, setFormStarted] = useState(false); // Controls if the form conversation has begun
   const [sessionId, setSessionId] = useState(null); // New state for session ID from backend
   const [currentQuestionData, setCurrentQuestionData] = useState(null); // Stores {id, question} of current question
+  const [awaitingConfirmation, setAwaitingConfirmation] = useState(false); // New state to track if we're waiting for 'yes'/'no' confirmation
 
   // Refs for Web Speech API instances
   const synth = useRef(window.speechSynthesis); // SpeechSynthesisUtterance API
@@ -127,7 +129,7 @@ function App() {
     setIsListening(false); // Stop listening if it was active
     setUserInputText(""); // Clear input field
     setUserTranscript(""); // Clear transcript
-    setShowConfirmation(false); // Hide confirmation while waiting for backend response
+    // Removed setShowConfirmation(false);
 
     try {
       const payload = {
@@ -135,7 +137,8 @@ function App() {
         userMessage: message,
         action: actionType,
         currentQuestionId: currentQuestionData?.id,
-        confirmedOption: confirmedOption
+        confirmedOption: confirmedOption,
+        awaitingConfirmation: awaitingConfirmation // Pass this state to backend
       };
       console.log("Sending payload to backend:", payload);
 
@@ -162,10 +165,19 @@ function App() {
 
       // Crucially, all state updates for the next interaction phase happen INSIDE this callback
       speakText(normalizedAssistantMessage, () => {
+        // Reset awaitingConfirmation after the assistant has spoken its response
+        if (awaitingConfirmation && normalizedAction !== 'confirm_answer') { // If it's still confirming, keep it true
+            setAwaitingConfirmation(false);
+        }
+
         // Handle actions based on backend's response (using normalizedAction)
         if (normalizedAction === 'ask_readiness') {
           setCurrentQuestion("");
           setCurrentQuestionData(null);
+          // Start listening for readiness confirmation
+          if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
+            recognitionRef.current.startListeningDirectly();
+          }
         } else if (normalizedAction === 'ask_question' || normalizedAction === 're_ask') {
           console.log("Frontend: Action is 'ask_question' or 're_ask'. Setting question to:", data.nextQuestion);
           setCurrentQuestion(data.nextQuestion);
@@ -176,7 +188,11 @@ function App() {
           }
         } else if (normalizedAction === 'confirm_answer' && data.predictedOption) {
           setPredictedOption(data.predictedOption);
-          setShowConfirmation(true); // Show confirmation UI
+          setAwaitingConfirmation(true); // Now we are waiting for a 'yes' or 'no'
+          // Start listening immediately for confirmation
+          if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
+            recognitionRef.current.startListeningDirectly();
+          }
         } else if (normalizedAction === 'complete') {
           setCurrentQuestion("Questionnaire complete.");
           setFormStarted(false); // Disable further input
@@ -221,9 +237,9 @@ function App() {
         }
       });
       setIsSpeaking(false);
-      setShowConfirmation(false);
+      // Removed setShowConfirmation(false);
     }
-  }, [sessionId, speakText, currentQuestionData, isListening, currentQuestion, setAssistantMessage, setStoredResponses, setUserTranscript, setShowConfirmation]);
+  }, [sessionId, speakText, currentQuestionData, isListening, currentQuestion, setAssistantMessage, setStoredResponses, setUserTranscript, awaitingConfirmation]); // Added awaitingConfirmation to dependencies
 
 
   // 2. startListening: This is where you trigger the recognition start
@@ -280,11 +296,14 @@ function App() {
         const transcript = recognitionRef.current.lastTranscript;
         setUserTranscript(transcript); // Update UI state with final transcript
 
-        // Determine action based on current state (waiting for readiness or an answer)
+        // Determine action based on current state (waiting for readiness or an answer OR confirmation)
         let actionToSend = 'answer'; // Default for questions
-        if (!currentQuestionData && formStarted) {
-          actionToSend = 'confirm_readiness';
+        if (!currentQuestionData && formStarted && !awaitingConfirmation) {
+          actionToSend = 'confirm_readiness'; // If no question and form started, it's readiness phase
+        } else if (awaitingConfirmation) {
+          actionToSend = 'confirm_answer_verbal'; // New action type for verbal confirmation
         }
+
         console.log("Frontend: SpeechRecognition.onend -> Sending action:", actionToSend, "with transcript:", transcript);
         sendToBackend(transcript, actionToSend);
         recognitionRef.current.lastTranscript = null; // Clear after use
@@ -301,7 +320,7 @@ function App() {
     };
 
     return recognition;
-  }, [sendToBackend, currentQuestionData, formStarted, setUserTranscript, setIsListening, setAssistantMessage, speakText]);
+  }, [sendToBackend, currentQuestionData, formStarted, setUserTranscript, setIsListening, setAssistantMessage, speakText, awaitingConfirmation]); // Added awaitingConfirmation to dependencies
 
 
   // 6. startConversation: Depends on speakText and sendToBackend
@@ -335,74 +354,8 @@ function App() {
   }, [speakText, sendToBackend]);
 
 
-  // 7. handleConfirm: Depends on speakText, startListening
-  const handleConfirm = useCallback(async (confirmedOption) => {
-    setShowConfirmation(false); // Hide confirmation buttons immediately
-    setAssistantMessage("Confirming your answer...");
-
-    // Speak "Confirming..." and then proceed to backend in its callback
-    speakText("Confirming your answer...", async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/confirm-answer`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            sessionId: sessionId,
-            questionId: currentQuestionData?.id, // ID of the question just confirmed
-            confirmedOption: confirmedOption,
-            rawTranscript: userTranscript || userInputText // Original raw input for logging
-          }),
-        });
-
-        if (!response.ok) throw new Error('Failed to confirm answer');
-        const data = await response.json();
-        console.log("Confirmation response from backend:", data);
-
-        // Normalize assistantMessage and action if they are arrays
-        const normalizedAssistantMessage = Array.isArray(data.assistantMessage) ? data.assistantMessage[0] : data.assistantMessage;
-        const normalizedAction = Array.isArray(data.action) ? data.action[0] : data.action;
-
-        setAssistantMessage(normalizedAssistantMessage);
-
-        // Speak the assistant's next message, and then trigger the next step
-        speakText(normalizedAssistantMessage, () => {
-          if (normalizedAction === 'ask_question' && data.nextQuestion) {
-            setCurrentQuestion(data.nextQuestion);
-            setCurrentQuestionData({ id: data.questionId, question: data.nextQuestion });
-            if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-              recognitionRef.current.startListeningDirectly();
-            }
-          } else if (normalizedAction === 'complete') {
-            setCurrentQuestion("Questionnaire complete.");
-            setFormStarted(false);
-            setSessionId(null); // Clear session ID
-          } else {
-            // Fallback for unexpected actions after confirmation
-            if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-              recognitionRef.current.startListeningDirectly();
-            }
-          }
-          if (data.responses) {
-            setStoredResponses(data.responses);
-            localStorage.setItem('userQuestionnaireResponses', JSON.stringify(data.responses));
-          }
-        });
-
-      } catch (error) {
-        console.error("Error confirming answer with backend:", error);
-        setAssistantMessage("There was an issue confirming your answer. Please try again.");
-        speakText("There was an issue confirming your answer. Please try again.", () => {
-          // Try to re-enable listening to get user input
-          if (!isListening && currentQuestion) {
-            if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-              setTimeout(recognitionRef.current.startListeningDirectly, 2000);
-            }
-          }
-        });
-      }
-    }); // End of first speakText callback for "Confirming your answer..."
-  }, [sessionId, currentQuestionData, userTranscript, userInputText, speakText, isListening, currentQuestion, setAssistantMessage, setStoredResponses]);
-
+  // handleConfirm is no longer needed in its previous form, as confirmation is now verbal.
+  // We will handle the "yes/no" logic directly in the backend and App.js's sendToBackend's 'confirm_answer_verbal' action.
 
   // 8. handleAskForExplanation: Depends on stopListening, currentQuestionData, sendToBackend, speakText
   const handleAskForExplanation = useCallback(() => {
@@ -422,14 +375,16 @@ function App() {
   // 9. handleManualSubmit: Depends on sendToBackend
   const handleManualSubmit = useCallback(() => {
     if (userInputText.trim() === "") { setAssistantMessage("Please type your response."); return; }
-    // Determine action based on current state (waiting for readiness or an answer)
+    // Determine action based on current state (waiting for readiness or an answer OR confirmation)
     let actionToSend = 'answer'; // Default for questions
-    if (!currentQuestionData && formStarted) {
+    if (!currentQuestionData && formStarted && !awaitingConfirmation) {
       actionToSend = 'confirm_readiness';
+    } else if (awaitingConfirmation) {
+      actionToSend = 'confirm_answer_verbal'; // New action type for verbal confirmation
     }
     console.log("Frontend: handleManualSubmit -> Sending action:", actionToSend, "with message:", userInputText);
     sendToBackend(userInputText, actionToSend);
-  }, [userInputText, sendToBackend, setAssistantMessage, currentQuestionData, formStarted]);
+  }, [userInputText, sendToBackend, setAssistantMessage, currentQuestionData, formStarted, awaitingConfirmation]); // Added awaitingConfirmation
 
 
   // 10. handleStartListening: Simple wrapper around startListening
@@ -513,7 +468,7 @@ function App() {
                 </button>
                 {/* Enable explain button only if a question is currently active */}
                 <button onClick={handleAskForExplanation} disabled={isSpeaking || isListening || !currentQuestionData}>
-                  Explain Question
+                  Repeat Question
                 </button>
               </div>
 
@@ -534,7 +489,8 @@ function App() {
                 <p className="user-transcript">You said: "<em>{userTranscript}</em>"</p>
               )}
 
-              {showConfirmation && (
+              {/* REMOVED: Confirmation UI section */}
+              {/* {showConfirmation && (
                 <div className="confirmation-section">
                   <p className="confirmation-prompt">Did you mean: "<strong>{predictedOption}</strong>"?</p>
                   <div className="button-group">
@@ -552,7 +508,7 @@ function App() {
                     }}>No, let me try again</button>
                   </div>
                 </div>
-              )}
+              )} */}
             </div>
           </>
         )}
