@@ -1,197 +1,112 @@
-// backend/server.js
+require('dotenv').config();
 const express = require('express');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const dotenv = require('dotenv');
 const cors = require('cors');
-
-dotenv.config(); // Load environment variables from .env file
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
-const port = process.env.PORT || 3001; // Backend will run on port 3001
-
-// Check for API key
-if (!process.env.GEMINI_API_KEY) {
-    console.error("GEMINI_API_KEY is not set in the .env file!");
-    process.exit(1); // Exit if no API key
-}
-
-// Initialize Gemini API - Changed model to 'gemini-pro' for wider availability
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
+const port = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors({
-    origin: 'http://localhost:5173', // Allow requests from your React frontend
-    credentials: true
-}));
+app.use(cors());
 app.use(express.json()); // To parse JSON request bodies
 
-// --- Questionnaire Data (Can be loaded from a DB or file in a real app) ---
-// This is your fixed set of questions.
-const questionnaire = [
-    { id: 1, question: "How often do you find it difficult to focus on a task when there are distractions around you?", explanation: "This question is asking if background noise, conversations, or movement make it hard for you to concentrate on what you need to do." },
-    { id: 2, question: "Do you frequently feel overwhelmed by changes to your usual routine or plans?", explanation: "This question asks if unexpected changes to your day or schedule make you feel stressed or flustered." },
-    { id: 3, question: "How often do you struggle to understand unspoken social rules or cues during conversations?", explanation: "This question is about whether you find it hard to pick up on hints, body language, or meanings that aren't directly said when you're talking with people." },
-    { id: 4, question: "Do you often experience strong reactions to certain sounds, lights, or textures?", explanation: "This question asks if particular sensory inputs, like loud noises, bright lights, or the feel of certain fabrics, make you feel uncomfortable or intense." },
-    { id: 5, question: "How often do you have difficulty organizing your thoughts or belongings?", explanation: "This question is about whether you find it challenging to put your ideas in order, or to keep your items and spaces tidy." },
+// --- Google Gemini Setup ---
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+if (!GEMINI_API_KEY) {
+    console.error("GEMINI_API_KEY is not set in .env file.");
+    process.exit(1);
+}
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({
+    model: "gemini-1.5-flash",
+    generationConfig: { responseMimeType: "application/json" }
+});
+
+// --- Questios ---
+const questions = [
+    { id: 1, question: "How often do you find it difficult to focus on a task when there are distractions around you?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] },
+    { id: 2, question: "How often do you forget appointments or important dates?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] },
+    { id: 3, question: "How often do you interrupt others or finish their sentences?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] },
 ];
-const fixedOptions = ["Never", "Rarely", "Sometimes", "Often", "Very Often"];
 
-// Store conversation history and state per session
-// IMPORTANT: In a production app, use a proper session store (e.g., Redis, database)
-const sessions = {}; // key: sessionId, value: { conversationHistory: [], currentQuestionIndex: 0, responses: {}, currentQuestionId: null }
 
-// Helper function to generate a unique session ID
-const generateSessionId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+const sessions = new Map();
+
+function generateSessionId() {
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
 
 // --- API Endpoints ---
 
-// Endpoint to start a new session
+// 1. Start a new session
 app.post('/api/start-session', (req, res) => {
     const sessionId = generateSessionId();
-    sessions[sessionId] = {
+    sessions.set(sessionId, {
         conversationHistory: [],
-        currentQuestionIndex: 0,
         responses: {},
-        currentQuestionId: null // Tracks the ID of the question currently being asked
-    };
+        currentQuestionIndex: 0, // This is the 0-based index of the question *to be asked next*
+        lastPredictedOption: null, // Stores the predicted option from Gemini for VAGUE answer confirmation
+        lastQuestionOptions: [] // Store options for current question if clarification is needed
+    });
     console.log(`New session started: ${sessionId}`);
     res.json({ sessionId });
 });
 
-// Endpoint to handle chat interactions with the AI agent
+// 2. Main chat endpoint
 app.post('/api/chat', async (req, res) => {
-    const { sessionId, userMessage, action, currentQuestionId } = req.body;
+    const { sessionId, userMessage, action, currentQuestionId, awaitingVagueConfirmation } = req.body;
 
-    // Log incoming request for debugging
-    console.log("Backend: /api/chat received -> Session:", sessionId, "User Message:", userMessage, "Action:", action, "Current Q ID:", currentQuestionId);
-
-    if (!sessionId || !sessions[sessionId]) {
-        console.error(`Invalid or missing session ID: ${sessionId}`);
-        return res.status(400).json({ error: "Invalid session ID. Please start a new session." });
+    if (!sessionId) {
+        console.error("Backend: Session ID is missing in request.");
+        return res.status(400).json({ assistantMessage: "Session ID is required.", action: "error" });
     }
 
-    const session = sessions[sessionId];
-    let { conversationHistory, currentQuestionIndex, responses } = session;
-
-    // The active question is either the one associated with currentQuestionId (if provided)
-    // or the one at the currentQuestionIndex in the questionnaire array.
-    let activeQuestion = questionnaire.find(q => q.id === currentQuestionId) || questionnaire[session.currentQuestionIndex];
-    if (!activeQuestion && session.currentQuestionIndex < questionnaire.length) {
-        // If no activeQuestion found by ID but there should be one based on index
-        activeQuestion = questionnaire[session.currentQuestionIndex];
+    let session = sessions.get(sessionId);
+    if (!session) {
+        console.error("Backend: Session not found for ID:", sessionId);
+        return res.status(404).json({ assistantMessage: "Session not found. Please start a new session.", action: "error" });
     }
+
+    let conversationHistory = session.conversationHistory;
+    let userResponses = session.responses;
+
+    let assistantMessage;
+    let nextQuestion = null; // Text of the next question, determined by backend
+    let actionToFrontend = action;
+    let questionIdToFrontend = currentQuestionId; // Will be the ID of the question currently being addressed
+    let currentQuestionIndex = session.currentQuestionIndex; // Index of the question to be asked/answered
+    let predictedOption = session.lastPredictedOption; // Get the last predicted option for potential verbal confirmation
+    let currentQuestionOptions = session.lastQuestionOptions; // Get options for the current question
 
     try {
-        let promptText = "";
-        let assistantMessage = "";
-        let predictedOption = "";
-        let nextAction = "";
-        let geminiResponse = {};
+        // Add user message to conversation history BEFORE sending to Gemini for context
+        conversationHistory.push({ role: 'user', parts: [{ text: userMessage }] });
 
-        // Add user message to history, but only if it's actual user input (not 'init_questionnaire')
-        if (userMessage && userMessage !== "init_questionnaire" && userMessage !== "initiate") { // 'initiate' is just a trigger
-            conversationHistory.push({ role: "user", parts: [{ text: userMessage }] });
-        }
+        if (action === 'init_questionnaire') {
+            const initPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
+                Start by introducing the questionnaire, explaining its purpose (to understand daily experiences with information processing and environment interaction, not for diagnosis, emphasizing honesty, no right/wrong answers), and ask if they are ready to begin.
+                The questionnaire has ${questions.length} questions.
+                Provide your response as a JSON object with:
+                - "assistantMessage": [string]
+                - "action": ["ask_readiness"]
+                - "questionId": [null]
+                - "currentQuestionIndex": [0]
 
-        if (action === "init_questionnaire") {
-            // Initial prompt: Introduce and ask if ready to start
-            promptText = `You are an empathetic AI assistant for an ADHD questionnaire.
-            The user has just started the application.
-            First, introduce yourself warmly and briefly explain the purpose of the questionnaire: it helps understand daily experiences related to information processing and environmental interaction, emphasizing that honest answers provide better support for diverse thinking.
-            Then, crucially, **ask the user if they are ready to begin the questionnaire**. Do NOT ask the first question yet.
+                Strictly output only the JSON object. Do not include any other text outside the JSON.`;
 
-            Provide your response as a JSON object with:
-            - "assistantMessage": [string, the full intro and readiness question]
-            - "action": ["ask_readiness"] // New action type
-            - "questionId": [null or undefined] // No question asked yet
-            - "currentQuestionIndex": [0] // Still at the beginning
+            const initResult = await model.generateContent(initPrompt);
+            const initResponseText = initResult.response.text();
+            console.log("Backend: Gemini Raw Response (init_questionnaire prompt):", initResponseText);
 
-            Strictly output only the JSON object. Do not include any other text outside the JSON.`;
+            const initData = JSON.parse(initResponseText);
+            assistantMessage = initData.assistantMessage;
+            actionToFrontend = initData.action;
+            questionIdToFrontend = initData.questionId;
+            currentQuestionIndex = 0; // Always start at 0
+            session.currentQuestionIndex = currentQuestionIndex;
 
-            const result = await model.generateContent(promptText);
-            const responseText = result.response.text();
-            console.log("Backend: Gemini Raw Response (init_questionnaire prompt):", responseText);
-            try {
-                const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
-                geminiResponse = jsonMatch && jsonMatch[1] ? JSON.parse(jsonMatch[1]) : JSON.parse(responseText);
-
-                // Normalize assistantMessage and action if they are arrays
-                if (Array.isArray(geminiResponse.assistantMessage)) {
-                    geminiResponse.assistantMessage = geminiResponse.assistantMessage[0];
-                }
-                if (Array.isArray(geminiResponse.action)) {
-                    geminiResponse.action = geminiResponse.action[0];
-                }
-            } catch (parseError) {
-                console.error("Backend: Failed to parse Gemini init response as JSON:", parseError);
-                geminiResponse = {
-                    assistantMessage: "Hello! I'm your AI assistant for this questionnaire. It helps us understand your daily experiences. Are you ready to begin?",
-                    action: "ask_readiness",
-                    questionId: null,
-                    currentQuestionIndex: 0
-                };
-            }
-
-            assistantMessage = geminiResponse.assistantMessage;
-            nextAction = geminiResponse.action;
-            session.currentQuestionIndex = geminiResponse.currentQuestionIndex; // Should be 0
-            session.currentQuestionId = geminiResponse.questionId; // Should be null
-
-        } else if (action === "explain" && activeQuestion) {
-            // If user explicitly asks for explanation
-            // The frontend should have sent 'explain' action
-            assistantMessage = `Explanation for the current question: ${activeQuestion.explanation}`;
-            nextAction = "re_ask"; // Re-ask the same question after explanation
-
-            promptText = `The user asked for an explanation for the question: "${activeQuestion.question}". Here is the explanation you provided: "${activeQuestion.explanation}". Now, please re-prompt the user with the original question, which is: "${activeQuestion.question}".
-            Provide your response as a JSON object with:
-            - "assistantMessage": [string, the explanation + re-prompt]
-            - "nextQuestion": [string, the text of the current question]
-            - "action": ["re_ask"]
-            - "questionId": [number, the ID of the current question]
-            - "currentQuestionIndex": [number, the current 0-based index]
-
-            Strictly output only the JSON object. Do not include any other text outside the JSON.
-            `;
-            const result = await model.generateContent(promptText);
-            const responseText = result.response.text();
-            console.log("Backend: Gemini Raw Response (explain prompt):", responseText);
-            try {
-                const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
-                geminiResponse = jsonMatch && jsonMatch[1] ? JSON.parse(jsonMatch[1]) : JSON.parse(responseText);
-
-                // Normalize assistantMessage and action if they are arrays
-                if (Array.isArray(geminiResponse.assistantMessage)) {
-                    geminiResponse.assistantMessage = geminiResponse.assistantMessage[0];
-                }
-                if (Array.isArray(geminiResponse.action)) {
-                    geminiResponse.action = geminiResponse.action[0];
-                }
-            } catch (parseError) {
-                console.error("Backend: Failed to parse Gemini explain response as JSON:", parseError);
-                geminiResponse = {
-                    assistantMessage: `Explanation: ${activeQuestion.explanation} Now, please answer: ${activeQuestion.question}`,
-                    nextQuestion: activeQuestion.question,
-                    action: "re_ask",
-                    questionId: activeQuestion.id,
-                    currentQuestionIndex: session.currentQuestionIndex
-                };
-            }
-            assistantMessage = geminiResponse.assistantMessage;
-            nextAction = geminiResponse.action;
-
-        } else {
-            // General conversation flow:
-            // 1. User confirms readiness (action: 'confirm_readiness' from frontend)
-            // 2. User answers a question (action: 'answer' from frontend)
-
-            if (action === "confirm_readiness" || (session.currentQuestionId === null && session.currentQuestionIndex === 0)) {
-                // This block handles:
-                // - Frontend explicitly sending 'confirm_readiness'
-                // - Frontend sending 'answer' when it should be 'confirm_readiness' (backend re-evaluates)
-
-                promptText = `The user's response was "${userMessage}". You previously asked if they were ready to start the questionnaire.
+        } else if (action === 'confirm_readiness') {
+            const readinessConfirmationPrompt = `The user's response was "${userMessage}". You previously asked if they were ready to start the questionnaire.
                 Determine if their response indicates they are ready (e.g., "yes", "I am", "ready", "start").
                 If they are ready:
                 - Set "action" to "confirm_readiness".
@@ -208,313 +123,352 @@ app.post('/api/chat', async (req, res) => {
 
                 Strictly output only the JSON object. Do not include any other text outside the JSON.`;
 
-                console.log("Backend: Sending prompt to Gemini for readiness confirmation:", promptText);
-                const result = await model.generateContent(promptText);
-                const responseText = result.response.text();
-                console.log("Backend: Gemini Raw Response (readiness confirmation):", responseText);
+            console.log("Backend: Sending prompt to Gemini for readiness confirmation:", readinessConfirmationPrompt);
+            const readinessResult = await model.generateContent(readinessConfirmationPrompt);
+            const readinessResponseText = readinessResult.response.text();
+            console.log("Backend: Gemini Raw Response (readiness confirmation):", readinessResponseText);
 
-                try {
-                    const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
-                    if (jsonMatch && jsonMatch[1]) {
-                        geminiResponse = JSON.parse(jsonMatch[1]);
-                    } else {
-                        geminiResponse = JSON.parse(responseText);
-                    }
+            const readinessData = JSON.parse(readinessResponseText);
+            assistantMessage = readinessData.assistantMessage;
+            actionToFrontend = readinessData.action;
 
-                    // Normalize assistantMessage and action if they are arrays
-                    if (Array.isArray(geminiResponse.assistantMessage)) {
-                        geminiResponse.assistantMessage = geminiResponse.assistantMessage[0];
-                    }
-                    if (Array.isArray(geminiResponse.action)) {
-                        geminiResponse.action = geminiResponse.action[0];
-                    }
+            if (actionToFrontend === 'confirm_readiness') {
+                // If ready, immediately ask the first question
+                currentQuestionIndex = 0; // Set to the first question
+                nextQuestion = questions[currentQuestionIndex].question;
+                questionIdToFrontend = questions[currentQuestionIndex].id;
+                actionToFrontend = 'ask_question'; // Transition to asking the first question
+                // Backend constructs the full message including the question
+                assistantMessage = `${assistantMessage} Question ${currentQuestionIndex + 1}: ${nextQuestion}.`;
+                session.lastQuestionOptions = questions[currentQuestionIndex].options; // Store options for current question
+                session.currentQuestionIndex = currentQuestionIndex; // Update session index
+            } else {
+                // Clarify readiness
+                questionIdToFrontend = null;
+                currentQuestionIndex = 0; // Remain at initial state for readiness
+                session.lastQuestionOptions = []; // Clear options
+            }
 
-                } catch (parseError) {
-                    console.error("Backend: Failed to parse Gemini readiness confirmation response as JSON:", parseError);
-                    console.error("Backend: Problematic response text:", responseText);
-                    // Fallback for parsing errors
-                    geminiResponse = {
-                        assistantMessage: "I had trouble understanding that. Are you ready to begin the questionnaire?",
-                        action: "clarify", // Default to clarify on parse error
-                        questionId: null,
-                        currentQuestionIndex: 0
-                    };
-                }
+        } else if (action === 'answer') { // Handles initial answer to a question
+            const currentQuestionObj = questions[session.currentQuestionIndex];
+            if (!currentQuestionObj || currentQuestionObj.id !== currentQuestionId) {
+                console.warn("Backend: Mismatch or invalid question ID for 'answer' action:", currentQuestionId, "Session Index:", session.currentQuestionIndex);
+                return res.status(400).json({ assistantMessage: "Invalid or outdated question context. Please try again.", action: "error", questionId: null, currentQuestionIndex: session.currentQuestionIndex });
+            }
 
-                // If Gemini confirmed readiness, NOW transition to asking the first question
-                if (geminiResponse.action === "confirm_readiness") {
-                    const firstQuestion = questionnaire[0]; // Get the first question
-                    session.currentQuestionId = firstQuestion.id;
-                    session.currentQuestionIndex = 0;
+            const answerPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
+                The current question being answered is: "${currentQuestionObj.question}".
+                The user's response options are: ${currentQuestionObj.options.join(', ')}.
+                There are a total of ${questions.length} questions. The current question is question number ${session.currentQuestionIndex + 1}.
 
-                    assistantMessage = geminiResponse.assistantMessage + ` Now, let's begin. Question 1: ${firstQuestion.question}.`;
-                    nextAction = "ask_question"; // Set action to ask the question
-                    geminiResponse.nextQuestion = firstQuestion.question; // Add nextQuestion for frontend
-                    geminiResponse.questionId = firstQuestion.id; // Add questionId for frontend
-                    geminiResponse.currentQuestionIndex = 0; // Add currentQuestionIndex for frontend
-
-                } else if (geminiResponse.action === "clarify") {
-                    assistantMessage = geminiResponse.assistantMessage;
-                    nextAction = geminiResponse.action;
-                } else {
-                    // Fallback if Gemini gives an unexpected action for readiness
-                    assistantMessage = "I'm not sure how to proceed. Are you ready to begin?";
-                    nextAction = "clarify";
-                }
-
-
-            } else if (activeQuestion) {
-                // This is the existing logic for processing answers to actual questions
-                const optionsList = fixedOptions.join(', ');
-                promptText = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
-                The current question being answered is: "${activeQuestion.question}".
-                The user's response options are: ${optionsList}.
-
-                Based on the user's last input "${userMessage}", you need to categorize their answer into one of the options.
-                If the user's input clearly indicates one of the options, state the option you inferred and ask for confirmation from the user (e.g., "I heard X, did you mean Y?").
-                If the input is ambiguous, unclear, or asks a non-explanation related question, ask for clarification by prompting them to choose from the given options, or rephrase their answer.
+                Based on the user's last input "${userMessage}", categorize their answer into one of the options.
+                You MUST respond with one of the following actions:
+                - "ask_question": If the user's input clearly indicates one of the fixed options, and there are more questions.
+                    The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Okay.", "Got it."). The backend will append the next question.
+                - "complete": If the user's input clearly indicates one of the fixed options, and this is the last question.
+                    The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Great."). The backend will generate the completion message.
+                - "clarify_and_confirm": If the input is vague or could refer to multiple options, infer the most likely option.
+                    The assistantMessage should then ask for confirmation of the inferred option AND provide the list of options for clarity.
+                    (e.g., "I think you mean [Inferred Option]. Is that correct (yes/no), or would you like to choose from ${currentQuestionObj.options.join(', ')}?").
+                - "clarify": If the input is completely irrelevant, uninterpretable, or asks a non-explanation related question, ask for clarification by prompting them to choose from the given options or rephrase their answer.
 
                 Provide your response as a JSON object with the following keys:
-                - "assistantMessage": [string, the text the assistant should say to the user]
-                - "predictedOption": [string, the categorized option, e.g., "Sometimes". Only if an option is clearly identified.]
-                - "action": [string, e.g., "confirm_answer", "clarify"]
-                - "questionId": [number, the ID of the question that was just processed]
-                - "currentQuestionIndex": [number, the 0-based index of the question that was just processed]
+                - "assistantMessage": [string, the text the assistant should say to the user *before* the next question is appended by the backend, or the full clarification message.]
+                - "predictedOption": [string, the inferred option for "clarify_and_confirm" action, otherwise null.]
+                - "action": [string, "ask_question", "clarify_and_confirm", "clarify", "complete"]
+                - "questionId": [number, the ID of the *next* question for "ask_question"/"complete", or *current* question for "clarify_and_confirm"/"clarify"]
+                - "currentQuestionIndex": [number, the 0-based index of the *next* question for "ask_question"/"complete", or *current* question for "clarify_and_confirm"/"clarify"]
+                - "confirmedAnswer": [string, the fixed option if the answer is clear, otherwise null. This is for your internal backend use to save the response.]
 
                 Strictly output only the JSON object. Do not include any other text outside the JSON.
+
+                Recent Conversation History:
+                ${conversationHistory.map(entry => `${entry.role}: ${entry.parts[0].text}`).join('\n')}
+            `;
+
+            console.log("Backend: Sending prompt to Gemini for answer processing:", answerPrompt);
+            const answerResult = await model.generateContent(answerPrompt);
+            const answerResponseText = answerResult.response.text();
+            console.log("Backend: Gemini Raw Response (answer processing):", answerResponseText);
+
+            const answerData = JSON.parse(answerResponseText);
+            let geminiAssistantMessage = answerData.assistantMessage; // Store Gemini's direct message
+            actionToFrontend = answerData.action;
+            questionIdToFrontend = answerData.questionId;
+            predictedOption = answerData.predictedOption || null; // Store predicted option if provided
+            const confirmedAnswer = answerData.confirmedAnswer || null; // The clear answer if confirmed by Gemini
+
+            if (confirmedAnswer) {
+                userResponses[currentQuestionObj.id] = {
+                    question: currentQuestionObj.question,
+                    answer: confirmedAnswer,
+                    rawTranscript: userMessage // The initial answer
+                };
+                session.responses = userResponses;
+            }
+
+            if (actionToFrontend === 'ask_question') {
+                session.lastPredictedOption = null; // Clear if not needed
+                // Calculate next question index correctly for 'ask_question'
+                currentQuestionIndex = session.currentQuestionIndex + 1;
+                session.currentQuestionIndex = currentQuestionIndex; // Update session index
+                if (currentQuestionIndex < questions.length) {
+                    nextQuestion = questions[currentQuestionIndex].question;
+                    questionIdToFrontend = questions[currentQuestionIndex].id;
+                    session.lastQuestionOptions = questions[currentQuestionIndex].options;
+                    // BACKEND CONSTRUCTS THE FULL ASSISTANT MESSAGE
+                    assistantMessage = `${geminiAssistantMessage} Question ${currentQuestionIndex + 1}: ${nextQuestion}.`;
+                } else {
+                    // This scenario should be caught by 'complete' action from Gemini,
+                    // but as a safety, if we somehow get 'ask_question' for a non-existent question:
+                    actionToFrontend = 'complete'; // Force complete
+                    assistantMessage = "That's the last question! I'm now summarizing your responses.";
+                    nextQuestion = null;
+                    questionIdToFrontend = null;
+                    session.lastQuestionOptions = [];
+                }
+            } else if (actionToFrontend === 'complete') {
+                session.lastPredictedOption = null; // Clear if not needed
+                session.lastQuestionOptions = [];
+                nextQuestion = null; // No next question on complete
+                questionIdToFrontend = null; // No current question on complete
+                session.currentQuestionIndex = questions.length; // Mark as completed
+                // BACKEND CONSTRUCTS THE FULL ASSISTANT MESSAGE FOR COMPLETION
+                assistantMessage = "You've completed the questionnaire! I'm now summarizing your responses."; // Simple acknowledgement before summary logic
+            } else if (actionToFrontend === 'clarify_and_confirm') {
+                session.lastPredictedOption = predictedOption; // Store for verbal confirmation
+                session.lastQuestionOptions = currentQuestionObj.options; // Keep current options handy
+                assistantMessage = geminiAssistantMessage; // Gemini provides the full message here
+                // questionIdToFrontend and currentQuestionIndex should remain for the current question
+                // Do NOT increment currentQuestionIndex here, as we are still on the same question
+            } else if (actionToFrontend === 'clarify') {
+                session.lastPredictedOption = null; // Clear any pending prediction
+                session.lastQuestionOptions = currentQuestionObj.options; // Keep current options handy
+                assistantMessage = geminiAssistantMessage; // Gemini provides the full message here
+                // Do NOT increment currentQuestionIndex here, as we are still on the same question
+            }
+
+
+        } else if (action === 'confirm_vague_answer') { // Handles confirmation for vague answers
+            const currentQuestionObj = questions[session.currentQuestionIndex];
+            if (!currentQuestionObj || currentQuestionObj.id !== currentQuestionId) {
+                console.warn("Backend: Mismatch or invalid question ID for 'confirm_vague_answer' action:", currentQuestionId, "Session Index:", session.currentQuestionIndex);
+                assistantMessage = "I seem to have lost track of the question. Can we restart?";
+                actionToFrontend = 'clarify'; // Or 'error'
+                questionIdToFrontend = null;
+                currentQuestionIndex = 0;
+                session.currentQuestionIndex = currentQuestionIndex;
+                session.lastPredictedOption = null;
+                session.lastQuestionOptions = [];
+            }
+
+            let lastPredictedOption = session.lastPredictedOption;
+            let questionOptionsForClarification = session.lastQuestionOptions;
+
+            if (!lastPredictedOption) {
+                console.warn("Backend: No lastPredictedOption found for vague confirmation. Clarifying.");
+                assistantMessage = `I didn't get a clear confirmation. Please tell me if the previous answer was correct (say 'yes' or 'no') or choose from: ${questionOptionsForClarification.join(', ')}.`;
+                actionToFrontend = 'clarify';
+                questionIdToFrontend = currentQuestionObj.id; // Keep current question context
+                currentQuestionIndex = session.currentQuestionIndex;
+            } else {
+                const confirmationPrompt = `The user's previous answer was inferred as "${lastPredictedOption}" for the question "${currentQuestionObj.question}".
+                    The user's latest response for confirmation is "${userMessage}".
+                    Determine if the user's response ("${userMessage}") indicates confirmation (e.g., "yes", "correct", "that's right") or denial (e.g., "no", "incorrect", "try again", "rephrase").
+                    If denial, also try to infer if they are providing a *different* valid option from: ${currentQuestionObj.options.join(', ')}.
+                    There are a total of ${questions.length} questions. The current question is question number ${session.currentQuestionIndex + 1}.
+
+                    If confirmed:
+                    - Set "action" to "ask_question" if more questions, or "complete" if last question.
+                    - Provide a *simple acknowledgement* in "assistantMessage" (e.g., "Confirmed.", "Okay."). The backend will append the next question/completion.
+                    - The confirmed answer is "${lastPredictedOption}".
+
+                    If denied AND a new clear option is provided (e.g., user says "no, I mean Rarely"):
+                    - Set "action" to "ask_question" if more questions, or "complete" if last question.
+                    - Provide a *simple acknowledgement* in "assistantMessage" (e.g., "Understood.", "Correction noted."). The backend will append the next question/completion.
+                    - The confirmed answer is the *new* option.
+
+                    If denied or unclear, and NO new clear option is provided:
+                    - Set "action" to "clarify".
+                    - Ask the user to rephrase their answer or choose from the options: ${currentQuestionObj.options.join(', ')}.
+                    - The "assistantMessage" should clearly prompt them to re-answer the *current* question and include options.
+
+                    Provide your response as a JSON object with:
+                    - "assistantMessage": [string, acknowledgement or clarification]
+                    - "action": ["ask_question", "clarify", "complete"]
+                    - "questionId": [number, the ID of the next question or current question if clarifying]
+                    - "currentQuestionIndex": [number, the 0-based index of the next question or current question if clarifying]
+                    - "confirmedAnswer": [string, the fixed option if confirmed or corrected, otherwise null. This is for your internal backend use to save the response.]
+
+                    Strictly output only the JSON object. Do not include any other text outside the JSON.
+
+                    Recent Conversation History:
+                    ${conversationHistory.map(entry => `${entry.role}: ${entry.parts[0].text}`).join('\n')}
                 `;
 
-                if (conversationHistory.length > 0) {
-                    const recentHistory = conversationHistory.slice(-4); // Last 4 turns
-                    promptText += "\nRecent Conversation History:\n" + recentHistory.map(entry => `${entry.role}: ${entry.parts[0].text}`).join('\n');
-                }
+                console.log("Backend: Sending prompt to Gemini for verbal confirmation of vague answer:", confirmationPrompt);
+                const confirmResult = await model.generateContent(confirmationPrompt);
+                const confirmResponseText = confirmResult.response.text();
+                console.log("Backend: Gemini Raw Response (verbal confirmation of vague answer):", confirmResponseText);
 
-                console.log("Backend: Sending prompt to Gemini for answer processing:", promptText);
-                const result = await model.generateContent(promptText);
-                const responseText = result.response.text();
-                console.log("Backend: Gemini Raw Response (answer processing):", responseText);
+                const confirmData = JSON.parse(confirmResponseText);
+                let geminiAssistantMessage = confirmData.assistantMessage; // Store Gemini's direct message
+                actionToFrontend = confirmData.action;
+                // nextQuestion = confirmData.nextQuestion || null; // No longer taking nextQuestion from Gemini
+                // currentQuestionIndex and confirmedAnswer should come directly from Gemini's response
+                currentQuestionIndex = confirmData.currentQuestionIndex; // Update from Gemini's response
+                questionIdToFrontend = confirmData.questionId;
+                const confirmedAnswer = confirmData.confirmedAnswer || null;
 
-                try {
-                    const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
-                    if (jsonMatch && jsonMatch[1]) {
-                        geminiResponse = JSON.parse(jsonMatch[1]);
+                if (actionToFrontend === 'ask_question' || actionToFrontend === 'complete') {
+                    if (confirmedAnswer) {
+                        userResponses[currentQuestionObj.id] = {
+                            question: currentQuestionObj.question,
+                            answer: confirmedAnswer, // Use the confirmed/corrected answer
+                            rawTranscript: userMessage // The "yes", "no, [new_option]"
+                        };
+                        session.responses = userResponses; // Update session with new response
                     } else {
-                        geminiResponse = JSON.parse(responseText);
+                        // Fallback if Gemini somehow didn't provide confirmedAnswer but said ask_question/complete
+                        userResponses[currentQuestionObj.id] = {
+                            question: currentQuestionObj.question,
+                            answer: lastPredictedOption, // Use the last predicted if no new one
+                            rawTranscript: userMessage
+                        };
+                        session.responses = userResponses;
                     }
+                    session.lastPredictedOption = null; // Clear predicted option after confirmation
 
-                    // Normalize assistantMessage and action if they are arrays
-                    if (Array.isArray(geminiResponse.assistantMessage)) {
-                        geminiResponse.assistantMessage = geminiResponse.assistantMessage[0];
+                    // Logic to handle next question or completion
+                    if (actionToFrontend === 'ask_question') {
+                        // Gemini should have returned the *next* index.
+                        // We check bounds locally to be safe.
+                        if (currentQuestionIndex < questions.length) {
+                            nextQuestion = questions[currentQuestionIndex].question; // Get next question text
+                            session.lastQuestionOptions = questions[currentQuestionIndex].options;
+                            session.currentQuestionIndex = currentQuestionIndex;
+                            // BACKEND CONSTRUCTS THE FULL ASSISTANT MESSAGE
+                            assistantMessage = `${geminiAssistantMessage} Question ${currentQuestionIndex + 1}: ${nextQuestion}.`;
+                        } else {
+                            // Should not happen if Gemini correctly sets 'complete', but as a fallback
+                            actionToFrontend = 'complete';
+                            assistantMessage = "That's the last question! I'm now summarizing your responses.";
+                            nextQuestion = null;
+                            questionIdToFrontend = null;
+                            session.lastQuestionOptions = [];
+                            session.currentQuestionIndex = questions.length;
+                        }
+                    } else if (actionToFrontend === 'complete') {
+                        session.lastQuestionOptions = [];
+                        session.currentQuestionIndex = questions.length; // Mark as completed
+                        questionIdToFrontend = null; // No current question on complete
+                        // BACKEND CONSTRUCTS THE FULL ASSISTANT MESSAGE FOR COMPLETION
+                        assistantMessage = "You've completed the questionnaire! I'm now summarizing your responses."; // Simple acknowledgement before summary logic
                     }
-                    if (Array.isArray(geminiResponse.action)) {
-                        geminiResponse.action = geminiResponse.action[0];
-                    }
-
-                } catch (parseError) {
-                    console.error("Backend: Failed to parse Gemini answer response as JSON:", parseError);
-                    console.error("Backend: Problematic response text:", responseText);
-
-                    // Fallback for parsing errors:
-                    predictedOption = mapFallbackToOption(userMessage);
-                    assistantMessage = `I apologize, I had trouble fully processing your response. Based on "${userMessage}", I predict: "${predictedOption}". Did I get that right?`;
-                    nextAction = "confirm_answer";
-                    geminiResponse = { assistantMessage, predictedOption, action: nextAction, questionId: activeQuestion.id, currentQuestionIndex: session.currentQuestionIndex };
+                } else if (actionToFrontend === 'clarify') {
+                    // User denied or unclear, needs to re-answer the same question
+                    session.lastPredictedOption = null; // Clear the predicted option
+                    session.lastQuestionOptions = currentQuestionObj.options; // Keep current options
+                    // currentQuestionIndex and questionIdToFrontend should remain for current question
+                    session.currentQuestionIndex = questions.findIndex(q => q.id === currentQuestionId);
+                    assistantMessage = geminiAssistantMessage; // Gemini provides the full clarification message
                 }
-                assistantMessage = geminiResponse.assistantMessage || "I'm not sure what to say.";
-                predictedOption = geminiResponse.predictedOption || "";
-                nextAction = geminiResponse.action || "clarify"; // Default to clarify if action is missing
-
-            } else {
-                // This case should ideally not be hit if init_questionnaire works.
-                assistantMessage = "I'm not sure which question we are on. Let's start over.";
-                nextAction = "start_over";
-                session.currentQuestionIndex = 0;
-                session.currentQuestionId = null;
             }
+
+        } else if (action === 'repeat_question') {
+            const currentQuestionObj = questions[session.currentQuestionIndex];
+            if (!currentQuestionObj) {
+                console.warn("Backend: Invalid question context for 'repeat_question' action:", session.currentQuestionIndex);
+                return res.status(400).json({ assistantMessage: "There's no active question to repeat.", action: "error", questionId: null, currentQuestionIndex: session.currentQuestionIndex });
+            }
+
+            assistantMessage = `${currentQuestionObj.question} The options are: ${currentQuestionObj.options.join(', ')}.`;
+            actionToFrontend = 're_ask'; // Indicate to frontend that it's a re-ask
+            nextQuestion = currentQuestionObj.question; // The question text itself
+            questionIdToFrontend = currentQuestionObj.id; // The ID of the current question
+            currentQuestionIndex = session.currentQuestionIndex; // Remain on the same question
+            session.lastPredictedOption = null; // Clear any pending prediction
+            session.lastQuestionOptions = currentQuestionObj.options; // Keep current options handy
+
+        } else {
+            console.warn("Backend: Unhandled action:", action);
+            assistantMessage = "I'm not sure how to handle that request. Can you please rephrase?";
+            actionToFrontend = 'clarify'; // Fallback for unhandled actions
+            // Use the session's currentQuestionIndex for context
+            const activeQuestion = questions[session.currentQuestionIndex];
+            questionIdToFrontend = activeQuestion ? activeQuestion.id : null;
+            currentQuestionIndex = session.currentQuestionIndex;
+            session.lastPredictedOption = null;
+            session.lastQuestionOptions = activeQuestion ? activeQuestion.options : [];
         }
 
-        // Add assistant's response to history
-        conversationHistory.push({ role: "model", parts: [{ text: assistantMessage }] });
+        // Handle 'complete' action finalization (moved outside conditional blocks to ensure it always runs for 'complete')
+        if (actionToFrontend === 'complete') {
+            let summaryMessage = "You've completed the questionnaire! Here's a summary of your responses:\n\n";
+            for (const id in userResponses) {
+                const responseData = userResponses[id];
+                if (responseData && responseData.question && responseData.answer) {
+                    summaryMessage += `Question: "${responseData.question}" -> Answered: "${responseData.answer}"\n\n`;
+                }
+            }
+            assistantMessage = summaryMessage + "\nThank you for your time!"; // Overwrite any previous assistant message for 'complete'
+            // Clear session data upon completion
+            sessions.delete(sessionId);
+            // The final message is pushed before sending response
+            conversationHistory.push({ role: 'model', parts: [{ text: assistantMessage }] });
+        } else {
+            // Push model's response to history for ongoing sessions
+            conversationHistory.push({ role: 'model', parts: [{ text: assistantMessage }] });
+            session.conversationHistory = conversationHistory;
+            sessions.set(sessionId, session); // Re-save updated session
+        }
 
-        console.log("Backend: Sending response to frontend -> Action:", nextAction, "Question:", geminiResponse.nextQuestion, "Assistant Message:", assistantMessage);
+
+        console.log("Backend: Sending response to frontend ->",
+            "Action:", actionToFrontend,
+            "Question ID:", questionIdToFrontend,
+            "Current Q Index:", currentQuestionIndex,
+            "Next Question:", nextQuestion ? nextQuestion.substring(0, Math.min(nextQuestion.length, 50)) + '...' : 'N/A', // Truncate for log
+            "Assistant Message:", assistantMessage.substring(0, Math.min(assistantMessage.length, 50)) + '...'); // Truncate for log
+
+
         res.json({
             assistantMessage: assistantMessage,
+            action: actionToFrontend,
+            questionId: questionIdToFrontend,
+            currentQuestionIndex: currentQuestionIndex,
+            nextQuestion: nextQuestion,
             predictedOption: predictedOption,
-            nextQuestion: geminiResponse.nextQuestion, // Will be present for 'ask_question' or 're_ask'
-            action: nextAction,
-            questionId: geminiResponse.questionId,
-            currentQuestionIndex: geminiResponse.currentQuestionIndex,
-            responses: responses // Send current responses for UI update
+            responses: userResponses,
         });
 
     } catch (e) {
-        console.error("Backend: Gemini API error:", e);
-        res.status(500).json({ assistantMessage: "I'm sorry, I'm having trouble connecting to the AI. Please try again.", action: "error" });
-    }
-});
-
-// Endpoint to explicitly confirm an answer (from frontend confirmation button)
-app.post('/api/confirm-answer', async (req, res) => {
-    const { sessionId, questionId, confirmedOption, rawTranscript } = req.body;
-
-    if (!sessionId || !sessions[sessionId]) {
-        console.error(`Backend: Invalid or missing session ID for confirm: ${sessionId}`);
-        return res.status(400).json({ error: "Invalid session ID." });
-    }
-
-    const session = sessions[sessionId];
-    const { responses, currentQuestionIndex } = session;
-    const questionForSaving = questionnaire.find(q => q.id === questionId);
-
-    if (questionForSaving) {
-        responses[questionId] = {
-            question: questionForSaving.question,
-            answer: confirmedOption,
-            rawTranscript: rawTranscript
-        };
-        session.responses = responses; // Update session state
-        // Update local storage in frontend later
-    }
-
-    // Now, tell Gemini to prepare the next question or completion message
-    let nextAssistantMessage = "";
-    let nextQuestionText = "";
-    let nextAction = "ask_question";
-    let newQuestionId = undefined;
-    let newCurrentQuestionIndex = currentQuestionIndex + 1; // Increment for the next question
-
-    try {
-        let promptText = "";
-        if (newCurrentQuestionIndex < questionnaire.length) {
-            const nextQ = questionnaire[newCurrentQuestionIndex];
-            nextQuestionText = nextQ.question;
-            newQuestionId = nextQ.id;
-
-            promptText = `The user has just confirmed their answer for question ${questionId} as "${confirmedOption}".
-            The next question in the questionnaire is: "${nextQ.question}".
-            Please acknowledge the user's confirmation and then present the next question.
-
-            Provide your response as a JSON object with:
-            - "assistantMessage": [string, acknowledgement + next question]
-            - "nextQuestion": [string, the text of the next question]
-            - "action": ["ask_question"]
-            - "questionId": [number, the ID of the next question]
-            - "currentQuestionIndex": [number, the 0-based index of the next question]
-
-            Strictly output only the JSON object. Do not include any other text outside the JSON.
-            `;
-        } else {
-            promptText = `The user has just confirmed their final answer as "${confirmedOption}".
-            All questions in the questionnaire are now complete.
-            Please provide a final completion message, thanking the user and stating the questionnaire is finished.
-
-            Provide your response as a JSON object with:
-            - "assistantMessage": [string, the completion message]
-            - "action": ["complete"]
-            - "responses": [object, the full collected responses for this session]
-
-            Strictly output only the JSON object. Do not include any other text outside the JSON.
-            `;
-            nextAction = "complete";
+        console.error("Backend: Error during /api/chat processing:", e);
+        const errorAssistantMessage = `I'm sorry, I encountered an error: ${e.message}. Please try again.`;
+        if (!conversationHistory.some(entry => entry.role === 'model' && entry.parts[0].text === errorAssistantMessage)) {
+            conversationHistory.push({ role: 'model', parts: [{ text: errorAssistantMessage }] });
         }
-
-        console.log("Backend: Sending prompt to Gemini for confirmation processing:", promptText);
-        const result = await model.generateContent(promptText);
-        const responseText = result.response.text();
-        console.log("Backend: Gemini Raw Response (confirm):", responseText);
-
-        let geminiRes;
-        try {
-            const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
-            geminiRes = jsonMatch && jsonMatch[1] ? JSON.parse(jsonMatch[1]) : JSON.parse(responseText);
-
-            // Normalize assistantMessage and action if they are arrays
-            if (Array.isArray(geminiRes.assistantMessage)) {
-                geminiRes.assistantMessage = geminiRes.assistantMessage[0];
-            }
-            if (Array.isArray(geminiRes.action)) {
-                geminiRes.action = geminiRes.action[0];
-            }
-
-        } catch (parseError) {
-            console.error("Backend: Failed to parse Gemini confirmation response as JSON:", parseError);
-            // Fallback if Gemini's JSON parsing fails
-            if (nextAction === "complete") {
-                geminiRes = { assistantMessage: "You have completed all questions. Thank you for your responses!", action: "complete" };
-            } else {
-                geminiRes = {
-                    assistantMessage: `Got it! Your answer is: ${confirmedOption}. Moving to the next question. Question ${newCurrentQuestionIndex + 1}: ${nextQuestionText}.`,
-                    nextQuestion: nextQuestionText,
-                    action: "ask_question",
-                    questionId: newQuestionId,
-                    currentQuestionIndex: newCurrentQuestionIndex
-                };
-            }
-        }
-
-        nextAssistantMessage = geminiRes.assistantMessage;
-        nextAction = geminiRes.action;
-
-        if (nextAction === "ask_question") {
-            session.currentQuestionIndex = newCurrentQuestionIndex; // Update session index
-            session.currentQuestionId = newQuestionId; // Update current question ID
-        } else if (nextAction === "complete") {
-            // No index update needed if complete
-        }
-
-        session.conversationHistory.push({ role: "model", parts: [{ text: nextAssistantMessage }] });
-
-        console.log("Backend: Sending confirmation response to frontend -> Action:", nextAction, "Question:", geminiRes.nextQuestion, "Assistant Message:", nextAssistantMessage);
-        res.json({
-            assistantMessage: nextAssistantMessage,
-            nextQuestion: geminiRes.nextQuestion,
-            action: nextAction,
-            questionId: newQuestionId,
-            currentQuestionIndex: newCurrentQuestionIndex,
-            responses: responses // Send back all updated responses
+        session.conversationHistory = conversationHistory;
+        sessions.set(sessionId, session);
+        res.status(500).json({
+            assistantMessage: errorAssistantMessage,
+            action: "error",
+            questionId: currentQuestionId,
+            currentQuestionIndex: session.currentQuestionIndex,
+            nextQuestion: null,
+            predictedOption: null,
+            responses: userResponses
         });
-
-    } catch (e) {
-        console.error("Backend: Error with Gemini API during confirmation:", e);
-        res.status(500).json({ assistantMessage: "There was an issue processing your confirmation. Please try again.", action: "error" });
     }
 });
 
-// Fallback mapping in case Gemini's JSON parsing fails or gives irrelevant output
-const mapFallbackToOption = (text) => {
-    const lowerText = text.toLowerCase();
-    const scores = {
-        "Never": 0, "Rarely": 0, "Sometimes": 0, "Often": 0, "Very Often": 0,
-    };
-    if (lowerText.includes("very often") || lowerText.includes("almost always") || lowerText.includes("all the time") || lowerText.includes("very much") || lowerText.includes("constantly") || lowerText.includes("every day")) scores["Very Often"] += 5;
-    if (lowerText.includes("often") || lowerText.includes("frequently") || lowerText.includes("a lot") || lowerText.includes("many times")) scores["Often"] += 5;
-    if (lowerText.includes("sometimes") || lowerText.includes("occasionally") || lowerText.includes("once in a while") || lowerText.includes("now and then") || lowerText.includes("a bit")) scores["Sometimes"] += 5;
-    if (lowerText.includes("rarely") || lowerText.includes("hardly ever") || lowerText.includes("seldom") || lowerText.includes("not often") || lowerText.includes("infrequently") || lowerText.includes("almost never")) scores["Rarely"] += 5;
-    if (lowerText.includes("never") || lowerText.includes("not at all") || lowerText.includes("no time") || (lowerText.includes("don't") && !lowerText.includes("sometimes"))) scores["Never"] += 5;
 
-    let bestOption = "Sometimes";
-    let highestScore = 0;
-    for (const option of fixedOptions) {
-        if (scores[option] > highestScore) {
-            highestScore = scores[option];
-            bestOption = option;
-        }
-    }
-
-    if (highestScore === 0) {
-        for (const option of fixedOptions) {
-            const regex = new RegExp(`\\b${option.toLowerCase().replace(' ', '\\s*')}\\b`);
-            if (regex.test(lowerText)) {
-                bestOption = option;
-                break;
-            }
-        }
-    }
-    return bestOption;
-};
-
-// Start the server
+// --- Server Start ---
 app.listen(port, () => {
     console.log(`Backend server running on http://localhost:${port}`);
-    console.log(`Make sure your Gemini API Key is set in .env: ${!!process.env.GEMINI_API_KEY ? "YES" : "NO - PLEASE SET IT!"}`);
+    if (GEMINI_API_KEY) {
+        console.log("Make sure your Gemini API Key is set in .env: YES");
+    } else {
+        console.log("Make sure your Gemini API Key is set in .env: NO (Server might not function correctly)");
+    }
 });
