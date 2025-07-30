@@ -1,32 +1,82 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
-// --- PNG Images for Avatar Selection Options ---
+// --- Static PNG Images for Avatar Selection Options and as default display when not talking ---
 import avatarFemaleAdultPng from './assets/3.png'; // Adult Female PNG
 import avatarMaleAdultPng from './assets/2.png';  // Adult Male PNG
 import avatarSmallBoyPng from './assets/1.png';   // Small Boy PNG
 import avatarSmallGirlPng from './assets/4.png';  // Small Girl PNG
 
+// --- GIF Images for Avatar Talking States (Import only the talking GIFs) ---
+// ADULT FEMALE
+import femaleAdultTalkingGif from './assets/3.gif';
+
+// ADULT MALE
+import maleAdultTalkingGif from './assets/2.gif';
+
+// SMALL BOY
+import smallBoyTalkingGif from './assets/1.gif';
+
+// SMALL GIRL
+import smallGirlTalkingGif from './assets/4.gif';
+
+
 const API_BASE_URL = 'http://localhost:3001/api';
 
-// --- Avatar Data Array with Updated Assignments ---
+// --- Avatar Data Array with Names, PNGs, and only Talking GIF paths (Ordered) ---
 const avatarOptions = [
-  { id: 'femaleAdult', png: avatarFemaleAdultPng, name: 'Adult Female' },
-  { id: 'maleAdult', png: avatarMaleAdultPng, name: 'Adult Male' },
-  { id: 'smallBoy', png: avatarSmallBoyPng, name: 'Small Boy' },
-  { id: 'smallGirl', png: avatarSmallGirlPng, name: 'Small Girl' },
+  {
+    id: 'femaleAdult',
+    png: avatarFemaleAdultPng,
+    name: 'Sarah', // Name for Adult Female
+    gifs: {
+      talking: femaleAdultTalkingGif,
+    }
+  },
+  {
+    id: 'maleAdult',
+    png: avatarMaleAdultPng,
+    name: 'John', // Name for Adult Male
+    gifs: {
+      talking: maleAdultTalkingGif,
+    }
+  },
+  {
+    id: 'smallGirl', // Child avatar
+    png: avatarSmallGirlPng,
+    name: 'Lily', // Name for Small Girl
+    gifs: {
+      talking: smallGirlTalkingGif,
+    }
+  },
+  {
+    id: 'smallBoy', // Child avatar
+    png: avatarSmallBoyPng,
+    name: 'Leo', // Name for Small Boy
+    gifs: {
+      talking: smallBoyTalkingGif,
+    }
+  },
 ];
 
-// --- Static Avatar Component ---
-const Avatar = ({ talking, listening, imageSrc, altText }) => {
+// --- Dynamic Avatar Component (Handles GIF selection, falls back to PNG) ---
+const Avatar = ({ talking, listening, selectedAvatarData, altText }) => {
   const avatarClass = `avatar ${talking ? 'talking' : ''} ${listening ? 'listening' : ''}`;
+  let currentImageSrc = selectedAvatarData?.png; // Default to PNG
+
+  if (selectedAvatarData) {
+    if (talking && selectedAvatarData.gifs.talking) {
+      currentImageSrc = selectedAvatarData.gifs.talking; // Use talking GIF if speaking
+    }
+    // If not talking, it will remain the PNG, as there are no idle/listening GIFs
+  }
 
   return (
     <div className={avatarClass}>
-      {imageSrc ? (
-        <img src={imageSrc} alt={altText} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+      {currentImageSrc ? (
+        <img src={currentImageSrc} alt={altText || selectedAvatarData?.name || "Avatar"} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
       ) : (
-        <p>No Avatar Selected</p> // Fallback if no image src is provided
+        <p>No Avatar Selected</p> // Fallback if no image src is provided at all
       )}
     </div>
   );
@@ -46,7 +96,7 @@ function App() {
   const [sessionId, setSessionId] = useState(null);
   const [currentQuestionData, setCurrentQuestionData] = useState(null);
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
-  const [selectedAvatar, setSelectedAvatar] = useState(null);
+  const [selectedAvatar, setSelectedAvatar] = useState(null); // Stores the full avatar object
 
   const [voices, setVoices] = useState([]);
   const [selectedVoice, setSelectedVoice] = useState(null);
@@ -142,7 +192,7 @@ function App() {
       return;
     }
 
-    setIsSpeaking(true);
+    setIsSpeaking(true); // Indicate speaking while waiting for backend response
     setIsListening(false);
     setUserInputText("");
     setUserTranscript("");
@@ -325,8 +375,8 @@ function App() {
 
     setFormStarted(true);
     setAssistantMessage("Hello! I'm initiating the session...");
-    // Removed the setTimeout speakText here to avoid "interrupted" error
-    // The actual introduction speech will come from sendToBackend's response.
+    // Removed the setTimeout speakText here to avoid "interrupted" error.
+    // The actual introduction speech will be triggered by the backend response.
 
     try {
       const response = await fetch(`${API_BASE_URL}/start-session`, {
@@ -339,7 +389,7 @@ function App() {
       console.log("Session started with ID:", newSessionId);
 
       setAssistantMessage("Session started. Getting introduction...");
-      // This call to sendToBackend will trigger the *first* actual speech
+      // This call to sendToBackend will ultimately trigger the first speech from the assistant
       await sendToBackend("initiate", "init_questionnaire", null, newSessionId);
 
     } catch (error) {
@@ -380,7 +430,7 @@ function App() {
 
     // 1. Try to find a voice matching keywords AND gender in name, excluding specified names
     let foundVoice = voices.find(v =>
-      v.lang.startsWith('en-US') && // Use startsWith to cover 'en-US' and 'en-US-something'
+      v.lang.startsWith('en-US') &&
       genderNameRegex.test(v.name) &&
       nameKeywordsRegex.test(v.name) &&
       (excludeNamesRegex ? !excludeNamesRegex.test(v.name) : true)
@@ -417,45 +467,40 @@ function App() {
       let rate = 1;
 
       if (selectedAvatar.id === 'femaleAdult') {
-        // Avatar 3.png: Adult Female
         voiceToUse = findUsVoice('female', /(zira|samantha|karen|serena|ava|microsoft helen|microsoft mark)/i, /(joanna|amy|alice|child|kid|google us english)/i);
         pitch = 1;
         rate = 1;
       } else if (selectedAvatar.id === 'maleAdult') {
-        // Avatar 2.png: Adult Male
         voiceToUse = findUsVoice('male', /(david|mark|daniel|alex|microsoft aron)/i, /(child|kid|google us english)/i);
         pitch = 1;
         rate = 1;
       } else if (selectedAvatar.id === 'smallBoy') {
-        // Avatar 1.png: Small Boy
         voiceToUse = findUsVoice('male', /(child|kid|google)/i, /(david|mark|daniel|alex|microsoft aron)/i);
         if (voiceToUse && (voiceToUse.name.toLowerCase().includes('child') || voiceToUse.name.toLowerCase().includes('kid'))) {
             pitch = 1.1;
             rate = 1.15;
         } else {
             voiceToUse = findUsVoice('male', /./, /(david|mark|daniel|alex|microsoft aron)/i);
-            if (!voiceToUse) voiceToUse = findUsVoice('male'); // Absolute fallback for male
+            if (!voiceToUse) voiceToUse = findUsVoice('male');
             pitch = 1.2;
             rate = 1.1;
         }
       } else if (selectedAvatar.id === 'smallGirl') {
-        // Avatar 4.png: Small Girl
         voiceToUse = findUsVoice('female', /(alice|child|kid|google)/i, /(zira|samantha|joanna|amy|helen|microsoft mark)/i);
         if (voiceToUse && (voiceToUse.name.toLowerCase().includes('alice') || voiceToUse.name.toLowerCase().includes('child') || voiceToUse.name.toLowerCase().includes('kid'))) {
-            pitch = 1.1; // Slightly higher pitch for a more distinct child-like voice
-            rate = 1.15; // Slightly faster rate
+            pitch = 1.1;
+            rate = 1.15;
         } else {
-            // If no child-like name, try any female and then adjust pitch/rate
             voiceToUse = findUsVoice('female', /./, /(zira|samantha|joanna|amy|helen|microsoft mark)/i);
-            if (!voiceToUse) voiceToUse = findUsVoice('female'); // Absolute fallback for female
-            pitch = 1.3; // Significantly higher pitch for a child effect
-            rate = 1.2;  // Faster rate
+            if (!voiceToUse) voiceToUse = findUsVoice('female');
+            pitch = 1.3;
+            rate = 1.2;
         }
-      } else { // Generic fallback for any unhandled avatar ID (shouldn't be hit with fixed avatarOptions)
+      } else { // Fallback if selectedAvatar is somehow invalid or not found in options (shouldn't happen with correct flow)
         voiceToUse = voices.find(v => v.default && v.lang.startsWith('en-US')) ||
-                     voices.find(v => v.lang.startsWith('en-US') && /female/i.test(v.name)) || // Prefer female if default not found
+                     voices.find(v => v.lang.startsWith('en-US') && /female/i.test(v.name)) ||
                      voices.find(v => v.lang.startsWith('en-US')) ||
-                     voices[0]; // Absolute last resort, any voice
+                     voices[0];
         pitch = 1;
         rate = 1;
       }
@@ -511,15 +556,13 @@ function App() {
       <h1>ADHD Form Assistant</h1>
 
       <div className="avatar-section">
-        {/* Display the selected avatar's PNG */}
-        {selectedAvatar && (
-          <Avatar
-            talking={isSpeaking}
-            listening={isListening}
-            imageSrc={selectedAvatar.png} // Pass the PNG image source
-            altText={selectedAvatar.name}
-          />
-        )}
+        {/* Pass the full selectedAvatar object to the Avatar component */}
+        <Avatar
+          talking={isSpeaking}
+          listening={isListening} // Although no listening GIF, passing for consistency
+          selectedAvatarData={selectedAvatar}
+          altText={selectedAvatar?.name || "Avatar"}
+        />
         <div className="assistant-dialogue">
           <p>{assistantMessage}</p>
         </div>
@@ -534,6 +577,7 @@ function App() {
                 <div
                   key={avatar.id}
                   className={`avatar-option ${selectedAvatar && selectedAvatar.id === avatar.id ? 'selected' : ''}`}
+                  // Store the *full* avatar object in state
                   onClick={() => setSelectedAvatar(avatar)}
                   style={{
                     cursor: 'pointer',
@@ -547,11 +591,15 @@ function App() {
                     boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
                     transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
                     display: 'flex',
+                    flexDirection: 'column', /* Arrange items vertically */
                     alignItems: 'center',
                     justifyContent: 'center',
+                    padding: '10px', /* Add some padding around content */
                   }}
                 >
+                  {/* Display PNG for selection */}
                   <img src={avatar.png} alt={avatar.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                  <p style={{ marginTop: '10px', fontWeight: 'bold' }}>{avatar.name}</p> {/* Display the name */}
                 </div>
               ))}
             </div>
