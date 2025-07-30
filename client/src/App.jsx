@@ -1,43 +1,33 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import Lottie from 'lottie-react';
 import './App.css';
 
-import avatar1 from './assets/avatar.json';
-import avatar2 from './assets/FemaleAvatar.json'; // Adult Female
-import avatar3 from './assets/male.json';         // Adult Male
-import avatar4 from './assets/Food.json';         // Small Girl (based on your current mapping)
-import avatar5 from './assets/Boy.json';          // Small Boy (based on your current mapping)
+// --- PNG Images for Avatar Selection Options ---
+import avatarFemaleAdultPng from './assets/3.png'; // Adult Female PNG
+import avatarMaleAdultPng from './assets/2.png';  // Adult Male PNG
+import avatarSmallBoyPng from './assets/1.png';   // Small Boy PNG
+import avatarSmallGirlPng from './assets/4.png';  // Small Girl PNG
 
 const API_BASE_URL = 'http://localhost:3001/api';
 
-// --- Animated Avatar Component (No changes needed here for voice) ---
-const Avatar = ({ talking, listening, animationData }) => {
-  const lottieRef = useRef();
+// --- Avatar Data Array with Updated Assignments ---
+const avatarOptions = [
+  { id: 'femaleAdult', png: avatarFemaleAdultPng, name: 'Adult Female' },
+  { id: 'maleAdult', png: avatarMaleAdultPng, name: 'Adult Male' },
+  { id: 'smallBoy', png: avatarSmallBoyPng, name: 'Small Boy' },
+  { id: 'smallGirl', png: avatarSmallGirlPng, name: 'Small Girl' },
+];
 
-  useEffect(() => {
-    if (lottieRef.current) {
-      if (talking) {
-        lottieRef.current.setSpeed(1);
-        lottieRef.current.play();
-      } else if (listening) {
-        lottieRef.current.setSpeed(0.5); // Slower speed for listening animation
-        lottieRef.current.play();
-      } else {
-        lottieRef.current.setSpeed(0.2); // Even slower for idle animation
-        lottieRef.current.play();
-      }
-    }
-  }, [talking, listening]);
+// --- Static Avatar Component ---
+const Avatar = ({ talking, listening, imageSrc, altText }) => {
+  const avatarClass = `avatar ${talking ? 'talking' : ''} ${listening ? 'listening' : ''}`;
 
   return (
-    <div className="avatar">
-      <Lottie
-        lottieRef={lottieRef}
-        animationData={animationData}
-        loop={true}
-        autoplay={true}
-        style={{ width: '100%', height: '100%' }}
-      />
+    <div className={avatarClass}>
+      {imageSrc ? (
+        <img src={imageSrc} alt={altText} style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+      ) : (
+        <p>No Avatar Selected</p> // Fallback if no image src is provided
+      )}
     </div>
   );
 };
@@ -60,8 +50,8 @@ function App() {
 
   const [voices, setVoices] = useState([]);
   const [selectedVoice, setSelectedVoice] = useState(null);
-  const [voicePitch, setVoicePitch] = useState(1); // Default pitch
-  const [voiceRate, setVoiceRate] = useState(1);   // Default rate
+  const [voicePitch, setVoicePitch] = useState(1);
+  const [voiceRate, setVoiceRate] = useState(1);
 
   const synth = useRef(window.speechSynthesis);
   const recognitionRef = useRef(null);
@@ -76,19 +66,23 @@ function App() {
       console.log("Available voices on your system:", availableVoices.map(v => ({ name: v.name, lang: v.lang, default: v.default })));
     };
 
-    loadVoices();
-    if (synth.current.onvoiceschanged !== undefined) {
-      synth.current.onvoiceschanged = loadVoices;
+    // Add this event listener to ensure voices are loaded
+    if (synth.current.onvoiceschanged === null) { // Prevent multiple listeners
+        synth.current.onvoiceschanged = loadVoices;
     }
 
+    // Call loadVoices immediately in case they are already loaded
+    loadVoices();
+
     return () => {
-      if (synth.current.onvoiceschanged) {
+      // Clean up the event listener if component unmounts
+      if (synth.current.onvoiceschanged === loadVoices) { // Only remove if it's our listener
         synth.current.onvoiceschanged = null;
       }
     };
-  }, []);
+  }, []); // Empty dependency array means this runs once on mount
 
-  // --- speakText (MODIFIED to use selectedVoice, pitch, and rate) ---
+  // --- speakText ---
   const speakText = useCallback((textToSpeak, onEndCallback = null) => {
     console.log("speakText called:", textToSpeak);
     if (!textToSpeak) { if (onEndCallback) onEndCallback(); return; }
@@ -98,12 +92,11 @@ function App() {
     }
 
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    // Always set a default language, but the voice selection will override this if a specific voice is found
-    utterance.lang = 'en-US';
+    utterance.lang = 'en-US'; // Default language
 
     if (selectedVoice) {
       utterance.voice = selectedVoice;
-      utterance.lang = selectedVoice.lang; // Ensure lang matches the voice for consistency
+      utterance.lang = selectedVoice.lang;
       utterance.pitch = voicePitch;
       utterance.rate = voiceRate;
       console.log(`Using voice: ${selectedVoice.name}, Lang: ${selectedVoice.lang}, Pitch: ${voicePitch}, Rate: ${voiceRate}`);
@@ -128,6 +121,7 @@ function App() {
     };
 
     currentUtteranceRef.current = utterance;
+    console.log("Attempting to speak with voice:", utterance.voice ? utterance.voice.name : "DEFAULT/NULL", "Pitch:", utterance.pitch, "Rate:", utterance.rate); // Diagnostic log
     synth.current.speak(utterance);
   }, [selectedVoice, voicePitch, voiceRate]);
 
@@ -182,6 +176,7 @@ function App() {
 
       setAssistantMessage(normalizedAssistantMessage);
 
+      // Speak the assistant's message from the backend
       speakText(normalizedAssistantMessage, () => {
         if (awaitingConfirmation && normalizedAction !== 'confirm_answer') {
             setAwaitingConfirmation(false);
@@ -302,7 +297,7 @@ function App() {
         if (!currentQuestionData && formStarted && !awaitingConfirmation) {
           actionToSend = 'confirm_readiness';
         } else if (awaitingConfirmation) {
-          actionToSend = 'confirm_vague_answer'; // Changed from 'confirm_answer_verbal'
+          actionToSend = 'confirm_vague_answer';
         }
 
         console.log("Frontend: SpeechRecognition.onend -> Sending action:", actionToSend, "with transcript:", transcript);
@@ -330,7 +325,8 @@ function App() {
 
     setFormStarted(true);
     setAssistantMessage("Hello! I'm initiating the session...");
-    speakText("Hello! I'm initiating the session...");
+    // Removed the setTimeout speakText here to avoid "interrupted" error
+    // The actual introduction speech will come from sendToBackend's response.
 
     try {
       const response = await fetch(`${API_BASE_URL}/start-session`, {
@@ -343,6 +339,7 @@ function App() {
       console.log("Session started with ID:", newSessionId);
 
       setAssistantMessage("Session started. Getting introduction...");
+      // This call to sendToBackend will trigger the *first* actual speech
       await sendToBackend("initiate", "init_questionnaire", null, newSessionId);
 
     } catch (error) {
@@ -353,15 +350,13 @@ function App() {
     }
   }, [speakText, sendToBackend, selectedAvatar]);
 
-  // REMOVED: handleAskForExplanation function is no longer needed
-
   const handleManualSubmit = useCallback(() => {
     if (userInputText.trim() === "") { setAssistantMessage("Please type your response."); return; }
     let actionToSend = 'answer';
     if (!currentQuestionData && formStarted && !awaitingConfirmation) {
       actionToSend = 'confirm_readiness';
     } else if (awaitingConfirmation) {
-      actionToSend = 'confirm_vague_answer'; // Changed from 'confirm_answer_verbal'
+      actionToSend = 'confirm_vague_answer';
     }
     console.log("Frontend: handleManualSubmit -> Sending action:", actionToSend, "with message:", userInputText);
     sendToBackend(userInputText, actionToSend);
@@ -378,109 +373,113 @@ function App() {
     }
   }, [selectedAvatar, formStarted]);
 
+  // Refined findUsVoice helper
+  const findUsVoice = useCallback((targetGender, nameKeywordsRegex = /./, excludeNamesRegex = null) => {
+    // Regex for common gender-specific keywords in voice names
+    const genderNameRegex = new RegExp(targetGender === 'female' ? '(female|femaile|zira|samantha|karen|serena|anna|alice|helen|joanna|amy|aura|victoria|eva)' : '(male|male|david|mark|daniel|alex|aron|mike|sam)', 'i');
+
+    // 1. Try to find a voice matching keywords AND gender in name, excluding specified names
+    let foundVoice = voices.find(v =>
+      v.lang.startsWith('en-US') && // Use startsWith to cover 'en-US' and 'en-US-something'
+      genderNameRegex.test(v.name) &&
+      nameKeywordsRegex.test(v.name) &&
+      (excludeNamesRegex ? !excludeNamesRegex.test(v.name) : true)
+    );
+    if (foundVoice) return foundVoice;
+
+    // 2. Fallback: Try any en-US voice matching gender in name, excluding specified names
+    foundVoice = voices.find(v =>
+      v.lang.startsWith('en-US') &&
+      genderNameRegex.test(v.name) &&
+      (excludeNamesRegex ? !excludeNamesRegex.test(v.name) : true)
+    );
+    if (foundVoice) return foundVoice;
+
+    // 3. Last resort fallback (only if previous gender-specific attempts fail):
+    // Prioritize female if target is female, otherwise just any en-US voice.
+    if (targetGender === 'female') {
+        // Try to find any female en-US voice, even if it wasn't filtered by keywords
+        foundVoice = voices.find(v => v.lang.startsWith('en-US') && genderNameRegex.test(v.name));
+    }
+    if (!foundVoice) { // If still no luck, then get ANY en-US voice (could be male for female avatars if no female voices exist)
+        foundVoice = voices.find(v => v.lang.startsWith('en-US'));
+    }
+
+    return foundVoice;
+  }, [voices]); // Depend on voices state as it uses the voices array
+
   // Effect to set the voice, pitch, and rate based on selected avatar
   useEffect(() => {
+    // Only attempt to set voice if voices are loaded AND an avatar is selected
     if (selectedAvatar && voices.length > 0) {
       let voiceToUse = null;
-      let pitch = 1; // Default
-      let rate = 1;  // Default
+      let pitch = 1;
+      let rate = 1;
 
-      // Helper function to find a voice specifically by en-US lang, then by name keywords
-      const findUsVoice = (genderRegex, nameKeywordsRegex = /./) => {
-        // Prioritize default en-US voices that match gender/keywords
-        const defaultUsVoice = voices.find(v => v.default && v.lang === 'en-US' && genderRegex.test(v.name) && nameKeywordsRegex.test(v.name));
-        if (defaultUsVoice) return defaultUsVoice;
-
-        // Then look for any en-US voice matching gender/keywords
-        const specificUsVoice = voices.find(v => v.lang === 'en-US' && genderRegex.test(v.name) && nameKeywordsRegex.test(v.name));
-        if (specificUsVoice) return specificUsVoice;
-
-        // Fallback to any en-US voice that matches just gender
-        return voices.find(v => v.lang === 'en-US' && genderRegex.test(v.name));
-      };
-
-      if (selectedAvatar === avatar2) { // Adult Female
-        // Common en-US female voice names: Zira, Samantha, Karen, Ava, Serena
-        voiceToUse = findUsVoice(/female|zira|samantha|karen|serena|ava/i);
+      if (selectedAvatar.id === 'femaleAdult') {
+        // Avatar 3.png: Adult Female
+        voiceToUse = findUsVoice('female', /(zira|samantha|karen|serena|ava|microsoft helen|microsoft mark)/i, /(joanna|amy|alice|child|kid|google us english)/i);
         pitch = 1;
         rate = 1;
-      } else if (selectedAvatar === avatar3) { // Adult Male
-        // Common en-US male voice names: David, Mark, Daniel, Alex
-        voiceToUse = findUsVoice(/male|david|mark|daniel|alex/i);
+      } else if (selectedAvatar.id === 'maleAdult') {
+        // Avatar 2.png: Adult Male
+        voiceToUse = findUsVoice('male', /(david|mark|daniel|alex|microsoft aron)/i, /(child|kid|google us english)/i);
         pitch = 1;
         rate = 1;
-      } else if (selectedAvatar === avatar4) { // Small Girl (currently Food.json)
-        // Try to find a specific child-like female voice (en-US only), then fallback to adult en-US female with adjusted pitch/rate
-        voiceToUse = findUsVoice(/female|alice/i, /(alice|child|kid)/i);
-        if (voiceToUse && (voiceToUse.name.toLowerCase().includes('alice') || voiceToUse.name.toLowerCase().includes('child') || voiceToUse.name.toLowerCase().includes('kid'))) {
-            pitch = 1; // Use natural pitch if an actual child/high-pitched voice is found
-            rate = 1;
-        } else {
-            // Fallback: Use any en-US female voice and force high pitch/rate
-            voiceToUse = findUsVoice(/female/i); // Find any en-US female voice first
-            if (!voiceToUse) { // If no en-US female voice found, use default en-US voice
-                voiceToUse = voices.find(v => v.default && v.lang === 'en-US') || voices.find(v => v.lang === 'en-US');
-            }
-            pitch = 1.3; // Significantly higher pitch for a child effect
-            rate = 1.2;  // Faster rate
-        }
-      } else if (selectedAvatar === avatar5) { // Small Boy (currently Boy.json)
-        // Try to find a specific child-like male voice (en-US only), then fallback to adult en-US male with adjusted pitch/rate
-        voiceToUse = findUsVoice(/male/i, /(child|kid)/i);
+      } else if (selectedAvatar.id === 'smallBoy') {
+        // Avatar 1.png: Small Boy
+        voiceToUse = findUsVoice('male', /(child|kid|google)/i, /(david|mark|daniel|alex|microsoft aron)/i);
         if (voiceToUse && (voiceToUse.name.toLowerCase().includes('child') || voiceToUse.name.toLowerCase().includes('kid'))) {
-            pitch = 1; // Use natural pitch if an actual child voice is found
-            rate = 1;
+            pitch = 1.1;
+            rate = 1.15;
         } else {
-            // Fallback: Use any en-US male voice and force high pitch/rate
-            voiceToUse = findUsVoice(/male/i); // Find any en-US male voice first
-            if (!voiceToUse) { // If no en-US male voice found, use default en-US voice
-                voiceToUse = voices.find(v => v.default && v.lang === 'en-US') || voices.find(v => v.lang === 'en-US');
-            }
-            pitch = 1.2; // Higher pitch for a child effect
-            rate = 1.1;  // Slightly faster rate
+            voiceToUse = findUsVoice('male', /./, /(david|mark|daniel|alex|microsoft aron)/i);
+            if (!voiceToUse) voiceToUse = findUsVoice('male'); // Absolute fallback for male
+            pitch = 1.2;
+            rate = 1.1;
         }
-      } else { // Default/Generic Avatar (avatar1) or fallback if no match
-        // Prioritize default en-US voice, then any en-US voice, then just the first available voice
-        voiceToUse = voices.find(v => v.default && v.lang === 'en-US') ||
-                     voices.find(v => v.lang === 'en-US') ||
-                     voices[0];
+      } else if (selectedAvatar.id === 'smallGirl') {
+        // Avatar 4.png: Small Girl
+        voiceToUse = findUsVoice('female', /(alice|child|kid|google)/i, /(zira|samantha|joanna|amy|helen|microsoft mark)/i);
+        if (voiceToUse && (voiceToUse.name.toLowerCase().includes('alice') || voiceToUse.name.toLowerCase().includes('child') || voiceToUse.name.toLowerCase().includes('kid'))) {
+            pitch = 1.1; // Slightly higher pitch for a more distinct child-like voice
+            rate = 1.15; // Slightly faster rate
+        } else {
+            // If no child-like name, try any female and then adjust pitch/rate
+            voiceToUse = findUsVoice('female', /./, /(zira|samantha|joanna|amy|helen|microsoft mark)/i);
+            if (!voiceToUse) voiceToUse = findUsVoice('female'); // Absolute fallback for female
+            pitch = 1.3; // Significantly higher pitch for a child effect
+            rate = 1.2;  // Faster rate
+        }
+      } else { // Generic fallback for any unhandled avatar ID (shouldn't be hit with fixed avatarOptions)
+        voiceToUse = voices.find(v => v.default && v.lang.startsWith('en-US')) ||
+                     voices.find(v => v.lang.startsWith('en-US') && /female/i.test(v.name)) || // Prefer female if default not found
+                     voices.find(v => v.lang.startsWith('en-US')) ||
+                     voices[0]; // Absolute last resort, any voice
         pitch = 1;
         rate = 1;
       }
 
-      // Final fallback if no specific US voice was found after all attempts
-      if (!voiceToUse) {
-        voiceToUse = voices.find(v => v.default && v.lang.startsWith('en')) || voices.find(v => v.lang.startsWith('en')) || voices[0];
-        console.warn("Could not find a suitable en-US voice. Falling back to first available English or system default voice.");
-        // Re-apply pitch/rate for child avatars if we fell back to a non-US voice to still get some distinction
-        if (selectedAvatar === avatar4 || selectedAvatar === avatar5) {
-            pitch = (selectedAvatar === avatar4) ? 1.3 : 1.2;
-            rate = (selectedAvatar === avatar4) ? 1.2 : 1.1;
-        } else {
-            pitch = 1;
-            rate = 1;
-        }
-      }
-
-
+      // Final check and assignment
       if (voiceToUse) {
         setSelectedVoice(voiceToUse);
         setVoicePitch(pitch);
         setVoiceRate(rate);
-        console.log(`Assigned voice for avatar: ${voiceToUse.name} (Lang: ${voiceToUse.lang}, Pitch: ${pitch}, Rate: ${rate})`);
+        console.log(`Assigned voice for avatar ID ${selectedAvatar.id}: ${voiceToUse.name} (Lang: ${voiceToUse.lang}, Pitch: ${pitch}, Rate: ${rate})`);
       } else {
-        console.error("No voices found on the system. Speech synthesis will not work.");
-        setSelectedVoice(null);
+        console.warn(`Could not find a suitable voice for avatar ID ${selectedAvatar.id}. Falling back to system default. This might not be gender-correct.`);
+        setSelectedVoice(null); // This will cause speakText to use browser's default
         setVoicePitch(1);
         setVoiceRate(1);
       }
-    } else if (!selectedAvatar) {
-      // If no avatar is selected, clear the selected voice and reset pitch/rate
-      setSelectedVoice(null);
-      setVoicePitch(1);
-      setVoiceRate(1);
+    } else if (!selectedAvatar && voices.length > 0) {
+        // If no avatar is selected, ensure voice selection is cleared
+        setSelectedVoice(null);
+        setVoicePitch(1);
+        setVoiceRate(1);
     }
-  }, [selectedAvatar, voices]);
+  }, [selectedAvatar, voices, findUsVoice]);
+
 
   useEffect(() => {
     if (isMounted.current) { return; }
@@ -512,11 +511,13 @@ function App() {
       <h1>ADHD Form Assistant</h1>
 
       <div className="avatar-section">
+        {/* Display the selected avatar's PNG */}
         {selectedAvatar && (
           <Avatar
             talking={isSpeaking}
             listening={isListening}
-            animationData={selectedAvatar}
+            imageSrc={selectedAvatar.png} // Pass the PNG image source
+            altText={selectedAvatar.name}
           />
         )}
         <div className="assistant-dialogue">
@@ -529,25 +530,28 @@ function App() {
           <div className="start-form-section">
             <h2>Select Your Avatar</h2>
             <div className="avatar-selection" style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
-              {[avatar1, avatar2, avatar3, avatar4, avatar5].map((avatar, index) => (
+              {avatarOptions.map((avatar) => (
                 <div
-                  key={index}
-                  className={`avatar-option ${selectedAvatar === avatar ? 'selected' : ''}`}
+                  key={avatar.id}
+                  className={`avatar-option ${selectedAvatar && selectedAvatar.id === avatar.id ? 'selected' : ''}`}
                   onClick={() => setSelectedAvatar(avatar)}
                   style={{
                     cursor: 'pointer',
                     width: '150px',
                     height: '150px',
                     margin: '0 10px',
-                    border: selectedAvatar === avatar ? '3px solid #007bff' : '3px solid transparent',
+                    border: selectedAvatar && selectedAvatar.id === avatar.id ? '3px solid #007bff' : '3px solid transparent',
                     borderRadius: '10px',
                     overflow: 'hidden',
                     backgroundColor: '#f0f0f0',
                     boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
                     transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                   }}
                 >
-                  <Lottie animationData={avatar} loop autoplay style={{ width: '100%', height: '100%' }} />
+                  <img src={avatar.png} alt={avatar.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
                 </div>
               ))}
             </div>
@@ -575,7 +579,6 @@ function App() {
                 <button onClick={stopListening} disabled={!isListening}>
                   Stop Listening
                 </button>
-                {/* REMOVED: The "Repeat Question" button is no longer here */}
               </div>
 
               <div className="text-input-section">
