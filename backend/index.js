@@ -22,7 +22,7 @@ const model = genAI.getGenerativeModel({
     generationConfig: { responseMimeType: "application/json" }
 });
 
-// --- Questios ---
+// --- Questions ---
 const questions = [
     { id: 1, question: "How often do you find it difficult to focus on a task when there are distractions around you?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] },
     { id: 2, question: "How often do you forget appointments or important dates?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] },
@@ -375,7 +375,7 @@ app.post('/api/chat', async (req, res) => {
                 }
             }
 
-        } else if (action === 'repeat_question') {
+        } else if (action === 'repeat_question') { // <-- NEW BLOCK HERE
             const currentQuestionObj = questions[session.currentQuestionIndex];
             if (!currentQuestionObj) {
                 console.warn("Backend: Invalid question context for 'repeat_question' action:", session.currentQuestionIndex);
