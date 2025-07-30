@@ -353,18 +353,7 @@ function App() {
     }
   }, [speakText, sendToBackend, selectedAvatar]);
 
-  const handleAskForExplanation = useCallback(() => {
-    if (isListening) { stopListening(); }
-    if (currentQuestionData) {
-      setAssistantMessage("Getting explanation...");
-      speakText("Getting explanation...", () => {
-        sendToBackend("Repeat the current question.", "repeat_question"); // MODIFIED HERE
-      });
-    } else {
-      setAssistantMessage("No question is currently active for explanation.");
-      speakText("No question is currently active for explanation.");
-    }
-  }, [isListening, stopListening, currentQuestionData, sendToBackend, speakText, setAssistantMessage]);
+  // REMOVED: handleAskForExplanation function is no longer needed
 
   const handleManualSubmit = useCallback(() => {
     if (userInputText.trim() === "") { setAssistantMessage("Please type your response."); return; }
@@ -586,9 +575,7 @@ function App() {
                 <button onClick={stopListening} disabled={!isListening}>
                   Stop Listening
                 </button>
-                <button onClick={handleAskForExplanation} disabled={isSpeaking || isListening || !currentQuestionData}>
-                  Repeat Question
-                </button>
+                {/* REMOVED: The "Repeat Question" button is no longer here */}
               </div>
 
               <div className="text-input-section">
