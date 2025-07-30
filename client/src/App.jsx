@@ -98,6 +98,12 @@ function App() {
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState(null); // Stores the full avatar object
 
+  // --- New States for Final Confirmation ---
+  const [showFinalConfirmation, setShowFinalConfirmation] = useState(false);
+  const [reviewingResponses, setReviewingResponses] = useState(false);
+  const [currentReviewIndex, setCurrentReviewIndex] = useState(0); // Index of question being reviewed/re-answered
+  const [finalSubmissionConfirmed, setFinalSubmissionConfirmed] = useState(false); // New state for final confirmation
+
   const [voices, setVoices] = useState([]);
   const [selectedVoice, setSelectedVoice] = useState(null);
   const [voicePitch, setVoicePitch] = useState(1);
@@ -183,7 +189,7 @@ function App() {
     }
   }, [isListening]);
 
-  const sendToBackend = useCallback(async (message, actionType, confirmedOption = null, overrideSessionId = null) => {
+  const sendToBackend = useCallback(async (message, actionType, confirmedOption = null, overrideSessionId = null, questionIdToReAnswer = null) => {
     const currentSessionId = overrideSessionId || sessionId;
     if (!currentSessionId && actionType !== 'init_questionnaire') {
       console.error("No session ID. Cannot send message to backend.");
@@ -204,7 +210,8 @@ function App() {
         action: actionType,
         currentQuestionId: currentQuestionData?.id,
         confirmedOption: confirmedOption,
-        awaitingConfirmation: awaitingConfirmation
+        awaitingConfirmation: awaitingConfirmation,
+        questionIdToReAnswer: questionIdToReAnswer // Pass this for re-answering specific questions
       };
       console.log("Sending payload to backend:", payload);
 
@@ -215,7 +222,10 @@ function App() {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        // Log the response status and text for better debugging
+        const errorText = await response.text();
+        console.error(`Backend error response: ${response.status} - ${errorText}`);
+        throw new Error(`HTTP error! status: ${response.status}. Details: ${errorText}`);
       }
 
       const data = await response.json();
@@ -232,9 +242,17 @@ function App() {
             setAwaitingConfirmation(false);
         }
 
+        if (data.responses) {
+          setStoredResponses(data.responses);
+          localStorage.setItem('userQuestionnaireResponses', JSON.stringify(data.responses));
+        }
+
         if (normalizedAction === 'ask_readiness') {
           setCurrentQuestion("");
           setCurrentQuestionData(null);
+          setReviewingResponses(false); // Exit review mode
+          setShowFinalConfirmation(false); // Hide final confirmation
+          setFinalSubmissionConfirmed(false); // Reset confirmation status
           if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
             recognitionRef.current.startListeningDirectly();
           }
@@ -242,6 +260,9 @@ function App() {
           console.log("Frontend: Action is 'ask_question' or 're_ask'. Setting question to:", data.nextQuestion);
           setCurrentQuestion(data.nextQuestion);
           setCurrentQuestionData({ id: data.questionId, question: data.nextQuestion });
+          setReviewingResponses(false); // Exit review mode if re-answering
+          setShowFinalConfirmation(false); // Hide final confirmation
+          setFinalSubmissionConfirmed(false); // Reset confirmation status
           if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
             recognitionRef.current.startListeningDirectly();
           }
@@ -252,9 +273,24 @@ function App() {
             recognitionRef.current.startListeningDirectly();
           }
         } else if (normalizedAction === 'complete') {
-          setCurrentQuestion("Questionnaire complete.");
-          setFormStarted(false);
-          setSessionId(null);
+            // Instead of immediately completing, show final confirmation
+            setShowFinalConfirmation(true);
+            setCurrentQuestion("Questionnaire completed. Please review your answers.");
+            setAssistantMessage("I've finished asking all the questions! Would you like to review your responses or are you ready to submit?");
+            speakText("I've finished asking all the questions! Would you like to review your responses or are you ready to submit?");
+            // DO NOT set formStarted to false or sessionId to null yet
+            // The user must confirm submission
+        } else if (normalizedAction === 'final_submission_complete') {
+            // This action confirms the backend has processed the final submission
+            setCurrentQuestion("Thank you for completing the questionnaire!");
+            setAssistantMessage("Your responses have been successfully submitted. Thank you for your time!");
+            speakText("Your responses have been successfully submitted. Thank you for your time!");
+            setFormStarted(false); // Now we can end the form
+            setSessionId(null);
+            setShowFinalConfirmation(false); // Hide confirmation UI
+            setReviewingResponses(false);
+            setCurrentReviewIndex(0);
+            setFinalSubmissionConfirmed(true); // SET THIS TO TRUE HERE!
         } else if (normalizedAction === 'clarify') {
             if (currentQuestionData) {
                 setCurrentQuestion(currentQuestionData.question);
@@ -272,11 +308,6 @@ function App() {
           if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
             recognitionRef.current.startListeningDirectly();
           }
-        }
-
-        if (data.responses) {
-          setStoredResponses(data.responses);
-          localStorage.setItem('userQuestionnaireResponses', JSON.stringify(data.responses));
         }
       });
 
@@ -344,14 +375,17 @@ function App() {
         setUserTranscript(transcript);
 
         let actionToSend = 'answer';
-        if (!currentQuestionData && formStarted && !awaitingConfirmation) {
+        // Only send confirm_readiness if form is started, not in any confirmation/review state
+        if (!currentQuestionData && formStarted && !awaitingConfirmation && !showFinalConfirmation && !reviewingResponses) {
           actionToSend = 'confirm_readiness';
         } else if (awaitingConfirmation) {
           actionToSend = 'confirm_vague_answer';
+        } else if (reviewingResponses && currentQuestionData?.id) { // If re-answering during review
+            actionToSend = 're_answer_specific_question';
         }
 
         console.log("Frontend: SpeechRecognition.onend -> Sending action:", actionToSend, "with transcript:", transcript);
-        sendToBackend(transcript, actionToSend);
+        sendToBackend(transcript, actionToSend, null, null, reviewingResponses ? currentQuestionData.id : null);
         recognitionRef.current.lastTranscript = null;
       } else {
         setAssistantMessage("I didn't catch that. Can you please repeat or type your answer?");
@@ -364,7 +398,7 @@ function App() {
     };
 
     return recognition;
-  }, [sendToBackend, currentQuestionData, formStarted, setUserTranscript, setIsListening, setAssistantMessage, speakText, awaitingConfirmation]);
+  }, [sendToBackend, currentQuestionData, formStarted, setUserTranscript, setIsListening, setAssistantMessage, speakText, awaitingConfirmation, showFinalConfirmation, reviewingResponses]);
 
   const startConversation = useCallback(async () => {
     if (!selectedAvatar) {
@@ -375,8 +409,10 @@ function App() {
 
     setFormStarted(true);
     setAssistantMessage("Hello! I'm initiating the session...");
-    // Removed the setTimeout speakText here to avoid "interrupted" error.
-    // The actual introduction speech will be triggered by the backend response.
+    setShowFinalConfirmation(false); // Reset in case user restarts
+    setReviewingResponses(false); // Reset
+    setCurrentReviewIndex(0); // Reset
+    setFinalSubmissionConfirmed(false); // Ensure this is false on new start
 
     try {
       const response = await fetch(`${API_BASE_URL}/start-session`, {
@@ -389,7 +425,6 @@ function App() {
       console.log("Session started with ID:", newSessionId);
 
       setAssistantMessage("Session started. Getting introduction...");
-      // This call to sendToBackend will ultimately trigger the first speech from the assistant
       await sendToBackend("initiate", "init_questionnaire", null, newSessionId);
 
     } catch (error) {
@@ -403,14 +438,21 @@ function App() {
   const handleManualSubmit = useCallback(() => {
     if (userInputText.trim() === "") { setAssistantMessage("Please type your response."); return; }
     let actionToSend = 'answer';
-    if (!currentQuestionData && formStarted && !awaitingConfirmation) {
+    let questionIdForReAnswer = null;
+
+    if (!currentQuestionData && formStarted && !awaitingConfirmation && !showFinalConfirmation && !reviewingResponses) {
       actionToSend = 'confirm_readiness';
     } else if (awaitingConfirmation) {
       actionToSend = 'confirm_vague_answer';
+    } else if (reviewingResponses && currentQuestionData?.id) { // If re-answering during review
+        actionToSend = 're_answer_specific_question';
+        questionIdForReAnswer = currentQuestionData.id;
     }
+
     console.log("Frontend: handleManualSubmit -> Sending action:", actionToSend, "with message:", userInputText);
-    sendToBackend(userInputText, actionToSend);
-  }, [userInputText, sendToBackend, setAssistantMessage, currentQuestionData, formStarted, awaitingConfirmation]);
+    sendToBackend(userInputText, actionToSend, null, null, questionIdForReAnswer);
+  }, [userInputText, sendToBackend, setAssistantMessage, currentQuestionData, formStarted, awaitingConfirmation, showFinalConfirmation, reviewingResponses]);
+
 
   const handleStartListening = useCallback(() => {
     if (isSpeaking && currentUtteranceRef.current) { synth.current.cancel(); }
@@ -418,10 +460,10 @@ function App() {
   }, [isSpeaking, startListening]);
 
   useEffect(() => {
-    if (selectedAvatar && !formStarted) {
+    if (selectedAvatar && !formStarted && !showFinalConfirmation && !finalSubmissionConfirmed) {
       setAssistantMessage("Click 'Start Form' to begin the questionnaire.");
     }
-  }, [selectedAvatar, formStarted]);
+  }, [selectedAvatar, formStarted, showFinalConfirmation, finalSubmissionConfirmed]);
 
   // Refined findUsVoice helper
   const findUsVoice = useCallback((targetGender, nameKeywordsRegex = /./, excludeNamesRegex = null) => {
@@ -487,6 +529,7 @@ function App() {
         }
       } else if (selectedAvatar.id === 'smallGirl') {
         voiceToUse = findUsVoice('female', /(alice|child|kid|google)/i, /(zira|samantha|joanna|amy|helen|microsoft mark)/i);
+        // FIX: Corrected typo from voiceToTo to voiceToUse
         if (voiceToUse && (voiceToUse.name.toLowerCase().includes('alice') || voiceToUse.name.toLowerCase().includes('child') || voiceToUse.name.toLowerCase().includes('kid'))) {
             pitch = 1.1;
             rate = 1.15;
@@ -551,15 +594,89 @@ function App() {
     };
   }, [initializeSpeechRecognition, isListening, startListening]);
 
+  // --- Handlers for Final Confirmation ---
+  const handleFinalSubmit = useCallback(() => {
+    setAssistantMessage("Great! Submitting your responses now...");
+    speakText("Great! Submitting your responses now.");
+    sendToBackend("final submit", "submit_final_responses");
+  }, [sendToBackend, speakText]);
+
+  const handleReviewResponses = useCallback(() => {
+    setReviewingResponses(true);
+    setShowFinalConfirmation(false); // Hide the main confirmation prompt
+    setCurrentReviewIndex(0); // Start review from the first question
+    const questionIds = Object.keys(storedResponses).sort((a, b) => parseInt(a) - parseInt(b)); // Correctly get sorted IDs
+    if (questionIds.length > 0) {
+        const firstQuestionId = questionIds[0]; // Get the actual ID
+        const firstQuestionData = storedResponses[firstQuestionId]; // Get data using the ID
+        setCurrentQuestionData({ id: firstQuestionId, question: firstQuestionData.question });
+        setAssistantMessage(`Okay, let's review. Question ${parseInt(firstQuestionId) + 1}: ${firstQuestionData.question}. Your current answer is "${firstQuestionData.answer}". Do you want to change it?`);
+        // REMOVE speakText BELOW if you want a silent review. Keep it if assistant should speak review prompt.
+        speakText(`Okay, let's review. Question ${parseInt(firstQuestionId) + 1}: ${firstQuestionData.question}. Your current answer is "${firstQuestionData.answer}". Do you want to change it?`, () => {
+            if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
+                recognitionRef.current.startListeningDirectly();
+            }
+        });
+    } else {
+        setAssistantMessage("There are no responses to review.");
+        // REMOVE speakText BELOW if you want this message to be silent.
+        speakText("There are no responses to review.");
+        setReviewingResponses(false);
+        setShowFinalConfirmation(true); // Go back to original final confirmation if no responses
+    }
+  }, [storedResponses, speakText]); // Added speakText to dependency array
+
+  const handleNextReviewQuestion = useCallback(() => {
+    const questionIds = Object.keys(storedResponses).sort((a, b) => parseInt(a) - parseInt(b));
+    const nextIndex = currentReviewIndex + 1;
+
+    if (nextIndex < questionIds.length) {
+        setCurrentReviewIndex(nextIndex);
+        const nextQuestionId = questionIds[nextIndex];
+        const nextQuestionData = storedResponses[nextQuestionId];
+        setCurrentQuestionData({ id: nextQuestionId, question: nextQuestionData.question });
+        setAssistantMessage(`Next question, number ${parseInt(nextQuestionId) + 1}: ${nextQuestionData.question}. Your current answer is "${nextQuestionData.answer}". Do you want to change it?`);
+        // REMOVE speakText BELOW if you want a silent review. Keep it if assistant should speak review prompt.
+        speakText(`Next question, number ${parseInt(nextQuestionId) + 1}: ${nextQuestionData.question}. Your current answer is "${nextQuestionData.answer}". Do you want to change it?`, () => {
+            if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
+                recognitionRef.current.startListeningDirectly();
+            }
+        });
+    } else {
+        setAssistantMessage("You've reviewed all questions. Are you ready to submit, or do you want to go back to the beginning of the review?");
+        // REMOVE speakText BELOW if you want this message to be silent.
+        speakText("You've reviewed all questions. Are you ready to submit, or do you want to go back to the beginning of the review?", () => {
+            if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
+                recognitionRef.current.startListeningDirectly();
+            }
+        });
+        setCurrentQuestionData(null); // No current question in review mode
+        // Offer buttons to go back to final confirmation or restart review
+    }
+  }, [currentReviewIndex, storedResponses, speakText]); // Added speakText to dependency array
+
+  // Handle re-answering a question during review
+  useEffect(() => {
+    // This effect listens to changes in currentQuestionData and reviewingResponses
+    // to potentially trigger a re-answer prompt for the specific question.
+    // The backend logic handles re-asking the question
+    // by returning action 'ask_question' or 're_ask' for the specific question ID.
+    // The sendToBackend already has the `questionIdToReAnswer` parameter
+    // so if the user responds "yes" (to change it) during review,
+    // the `sendToBackend` call will send the `re_answer_specific_question` action
+    // with the `currentQuestionData.id`.
+    // No explicit call needed here, as the backend drives the flow after user input.
+  }, [reviewingResponses, currentQuestionData, isSpeaking, isListening]);
+
+
   return (
     <div className="app-container">
       <h1>ADHD Form Assistant</h1>
 
       <div className="avatar-section">
-        {/* Pass the full selectedAvatar object to the Avatar component */}
         <Avatar
           talking={isSpeaking}
-          listening={isListening} // Although no listening GIF, passing for consistency
+          listening={isListening}
           selectedAvatarData={selectedAvatar}
           altText={selectedAvatar?.name || "Avatar"}
         />
@@ -569,7 +686,8 @@ function App() {
       </div>
 
       <div className="interaction-area">
-        {!formStarted && (
+        {/* Only show avatar selection if form not started and not in final confirmation */}
+        {!formStarted && !showFinalConfirmation && !finalSubmissionConfirmed && (
           <div className="start-form-section">
             <h2>Select Your Avatar</h2>
             <div className="avatar-selection" style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
@@ -577,7 +695,6 @@ function App() {
                 <div
                   key={avatar.id}
                   className={`avatar-option ${selectedAvatar && selectedAvatar.id === avatar.id ? 'selected' : ''}`}
-                  // Store the *full* avatar object in state
                   onClick={() => setSelectedAvatar(avatar)}
                   style={{
                     cursor: 'pointer',
@@ -591,15 +708,14 @@ function App() {
                     boxShadow: '0 2px 5px rgba(0,0,0,0.2)',
                     transition: 'border-color 0.3s ease, box-shadow 0.3s ease',
                     display: 'flex',
-                    flexDirection: 'column', /* Arrange items vertically */
+                    flexDirection: 'column',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    padding: '10px', /* Add some padding around content */
+                    padding: '10px',
                   }}
                 >
-                  {/* Display PNG for selection */}
                   <img src={avatar.png} alt={avatar.name} style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                  <p style={{ marginTop: '10px', fontWeight: 'bold' }}>{avatar.name}</p> {/* Display the name */}
+                  <p style={{ marginTop: '10px', fontWeight: 'bold' }}>{avatar.name}</p>
                 </div>
               ))}
             </div>
@@ -612,7 +728,89 @@ function App() {
           </div>
         )}
 
-        {formStarted && (
+        {/* --- Final Confirmation Section --- */}
+        {showFinalConfirmation && !reviewingResponses && (
+            <div className="final-confirmation-section">
+                <h2>Form Complete!</h2>
+                <p>All questions have been asked. Please review your answers below.</p>
+
+                <h3>Your Current Responses:</h3>
+                <ul style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #ccc', padding: '10px', borderRadius: '5px', backgroundColor: '#f9f9f9' }}>
+                    {Object.entries(storedResponses).map(([id, data]) => (
+                        <li key={id} style={{ marginBottom: '5px' }}>
+                            <strong>Q{parseInt(id) + 1}:</strong> "{data.question}" - Answer: "<strong>{data.answer}</strong>"
+                        </li>
+                    ))}
+                </ul>
+
+                <p>Are you okay with submitting these final responses, or would you like to re-answer any questions?</p>
+                <div className="button-group">
+                    <button onClick={handleFinalSubmit} disabled={isSpeaking}>Yes, I'm ready to submit</button>
+                    <button onClick={handleReviewResponses} disabled={isSpeaking}>No, I want to review/change an answer</button>
+                </div>
+            </div>
+        )}
+
+        {/* --- Reviewing Responses Section --- */}
+        {reviewingResponses && (
+            <div className="review-questions-section">
+                <h2>Reviewing Responses</h2>
+                {currentQuestionData ? (
+                    <>
+                        <p>Currently reviewing: **Question {parseInt(currentQuestionData.id) + 1}:** "{currentQuestionData.question}"</p>
+                        <p>Your current answer: "<strong>{storedResponses[currentQuestionData.id]?.answer}</strong>"</p>
+                        <p>Do you want to change this answer? Speak or type your new response, or say "No" to keep it as is.</p>
+                    </>
+                ) : (
+                    <p>You have reviewed all questions. Use the buttons below to finalize or go back.</p>
+                )}
+
+                <div className="user-controls">
+                    <div className="button-group">
+                        <button onClick={handleStartListening} disabled={isListening || isSpeaking}>
+                            {isListening ? "Listening..." : "Speak Your Answer"}
+                        </button>
+                        <button onClick={stopListening} disabled={!isListening}>
+                            Stop Listening
+                        </button>
+                    </div>
+
+                    <div className="text-input-section">
+                        <input
+                            type="text"
+                            value={userInputText}
+                            onChange={(e) => setUserInputText(e.target.value)}
+                            placeholder="Type your new answer or 'No' to keep it..."
+                            disabled={isSpeaking || isListening}
+                        />
+                        <button onClick={handleManualSubmit} disabled={isSpeaking || isListening || userInputText.trim() === ""}>
+                            Submit Text
+                        </button>
+                    </div>
+
+                    {userTranscript && (
+                        <p className="user-transcript">You said: "<em>{userTranscript}</em>"</p>
+                    )}
+                </div>
+
+                <div className="button-group" style={{marginTop: '20px'}}>
+                    <button onClick={handleNextReviewQuestion} disabled={isSpeaking || !currentQuestionData}>
+                        {currentReviewIndex < Object.keys(storedResponses).length - 1 ? "Next Question to Review" : "Finished Reviewing"}
+                    </button>
+                    <button onClick={() => {
+                        setReviewingResponses(false);
+                        setShowFinalConfirmation(true); // Go back to the main final confirmation screen
+                        setAssistantMessage("Okay, you're back at the final submission review. Are you ready to submit, or want to review again?");
+                        speakText("Okay, you're back at the final submission review. Are you ready to submit, or want to review again?");
+                    }} disabled={isSpeaking}>
+                        Back to Final Review
+                    </button>
+                </div>
+            </div>
+        )}
+
+        {/* --- Main Questionnaire Interaction Section (only visible if form started AND not in review/final confirmation) --- */}
+        {formStarted && !showFinalConfirmation && !reviewingResponses && (
           <>
             <div className="question-display">
               <h2>Current Question:</h2>
@@ -649,13 +847,15 @@ function App() {
           </>
         )}
 
-        {Object.keys(storedResponses).length > 0 && (
+        {/* --- Saved Responses Section (Only show AFTER final submission is confirmed) --- */}
+        {finalSubmissionConfirmed && Object.keys(storedResponses).length > 0 && (
           <div className="saved-responses-section">
-            <h3>Saved Responses:</h3>
+            <hr/>
+            <h3>Final Submitted Responses:</h3>
             <ul>
               {Object.entries(storedResponses).map(([id, data]) => (
                 <li key={id}>
-                  <strong>Q{id}:</strong> "{data.question}" - Answered: "<strong>{data.answer}</strong>" (Heard: "{data.rawTranscript}")
+                  <strong>Q{parseInt(id) + 1}:</strong> "{data.question}" - Answered: "<strong>{data.answer}</strong>" (Heard: "{data.rawTranscript}")
                 </li>
               ))}
             </ul>
@@ -663,7 +863,8 @@ function App() {
               localStorage.removeItem('userQuestionnaireResponses');
               setStoredResponses({});
               setAssistantMessage("Responses cleared from local storage.");
-              speakText("Responses cleared.");
+              speakText("Responses cleared."); // This message will still be spoken
+              setFinalSubmissionConfirmed(false); // Hide the section if cleared
             }}>Clear All Responses</button>
           </div>
         )}
