@@ -15,10 +15,7 @@ if (!GEMINI_API_KEY) {
     process.exit(1);
 }
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({
-    model: "gemini-1.5-flash",
-    generationConfig: { responseMimeType: "application/json" }
-});
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
 
 // --- Questions ---
 const questions = [
