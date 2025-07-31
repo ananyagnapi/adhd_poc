@@ -118,16 +118,12 @@ function App() {
   useEffect(() => {
     const loadVoices = () => {
       const availableVoices = synth.current.getVoices();
-      setVoices(availableVoices);
-      console.log("Available voices on your system:", availableVoices.map(v => ({ name: v.name, lang: v.lang, default: v.default })));
+      setVoices(availableVoices)
     };
-
-    // Add this event listener to ensure voices are loaded
     if (synth.current.onvoiceschanged === null) { // Prevent multiple listeners
         synth.current.onvoiceschanged = loadVoices;
     }
 
-    // Call loadVoices immediately in case they are already loaded
     loadVoices();
 
     return () => {
@@ -140,45 +136,111 @@ function App() {
 
   // --- speakText ---
   const speakText = useCallback((textToSpeak, onEndCallback = null) => {
-    console.log("speakText called:", textToSpeak);
-    if (!textToSpeak) { if (onEndCallback) onEndCallback(); return; }
-    if (synth.current.speaking) {
-      console.log("Cancelling ongoing speech to make way for new speech.");
-      synth.current.cancel();
-    }
-
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    utterance.lang = 'en-US'; // Default language
-
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-      utterance.lang = selectedVoice.lang;
-      utterance.pitch = voicePitch;
-      utterance.rate = voiceRate;
-      console.log(`Using voice: ${selectedVoice.name}, Lang: ${selectedVoice.lang}, Pitch: ${voicePitch}, Rate: ${voiceRate}`);
-    } else {
-      console.warn("No specific voice selected, using default browser voice with default pitch/rate.");
-      utterance.pitch = 1;
-      utterance.rate = 1;
-    }
-
-    utterance.onstart = () => { setIsSpeaking(true); console.log("SpeechSynthesis: Speaking started."); };
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      console.log("SpeechSynthesis: Speaking ended. Calling onEndCallback.");
-      if (onEndCallback) {
-        onEndCallback();
+      console.log("speakText called:", textToSpeak);
+      if (!textToSpeak) {
+        if (onEndCallback) onEndCallback();
+        return;
       }
-    };
-    utterance.onerror = (event) => {
-      console.error('Speech synthesis error:', event.error, 'for text:', textToSpeak);
-      setIsSpeaking(false);
-      if (onEndCallback) { onEndCallback(); }
-    };
-
-    currentUtteranceRef.current = utterance;
-    console.log("Attempting to speak with voice:", utterance.voice ? utterance.voice.name : "DEFAULT/NULL", "Pitch:", utterance.pitch, "Rate:", utterance.rate); // Diagnostic log
-    synth.current.speak(utterance);
+    
+      // Always cancel any ongoing speech to prevent conflicts
+      if (synth.current.speaking || synth.current.pending) {
+        console.log("Stopping ongoing/pending speech before starting new speech.");
+        synth.current.cancel();
+      }
+    
+      // Create the utterance
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      utterance.lang = 'en-US'; // Default language
+    
+      if (selectedVoice) {
+        utterance.voice = selectedVoice;
+        utterance.lang = selectedVoice.lang;
+        utterance.pitch = voicePitch;
+        utterance.rate = voiceRate;
+        console.log(`Using voice: ${selectedVoice.name}, Lang: ${selectedVoice.lang}, Pitch: ${voicePitch}, Rate: ${voiceRate}`);
+      } else {
+        console.warn("No specific voice selected, using default browser voice with default pitch/rate.");
+        utterance.pitch = 1;
+        utterance.rate = 1;
+      }
+    
+      // Track if this utterance has completed successfully
+      let hasCompleted = false;
+      let hasErrored = false;
+    
+      utterance.onstart = () => {
+        if (!hasErrored) {
+          setIsSpeaking(true);
+          console.log("SpeechSynthesis: Speaking started successfully.");
+        }
+      };
+    
+      utterance.onend = () => {
+        if (!hasErrored) {
+          hasCompleted = true;
+          setIsSpeaking(false);
+          console.log("SpeechSynthesis: Speaking ended successfully. Calling onEndCallback.");
+          if (onEndCallback) {
+            onEndCallback();
+          }
+        }
+      };
+    
+      utterance.onerror = (event) => {
+        hasErrored = true;
+        console.error('Speech synthesis error:', event.error, 'for text:', textToSpeak.substring(0, 50) + '...');
+      
+        // Handle different error types
+        if (event.error === 'interrupted') {
+          console.log('Speech was interrupted - retrying once...');
+          // For interrupted errors, try speaking again after a short delay
+          setTimeout(() => {
+            if (!hasCompleted) {
+              console.log('Retrying speech after interruption...');
+              // Create a new utterance for retry to avoid reuse issues
+              const retryUtterance = new SpeechSynthesisUtterance(textToSpeak);
+              retryUtterance.voice = utterance.voice;
+              retryUtterance.lang = utterance.lang;
+              retryUtterance.pitch = utterance.pitch;
+              retryUtterance.rate = utterance.rate;
+            
+              retryUtterance.onstart = () => {
+                setIsSpeaking(true);
+                console.log("SpeechSynthesis: Retry speaking started.");
+              };
+            
+              retryUtterance.onend = () => {
+                setIsSpeaking(false);
+                console.log("SpeechSynthesis: Retry speaking ended. Calling onEndCallback.");
+                if (onEndCallback) onEndCallback();
+              };
+            
+              retryUtterance.onerror = (retryEvent) => {
+                console.error('Retry speech also failed:', retryEvent.error);
+                setIsSpeaking(false);
+                if (onEndCallback) onEndCallback();
+              };
+            
+              synth.current.speak(retryUtterance);
+            }
+          }, 200);
+        } else {
+          console.log(`Speech error: ${event.error} - ending speech attempt`);
+          setIsSpeaking(false);
+          if (onEndCallback) onEndCallback();
+        }
+      };
+ 
+      currentUtteranceRef.current = utterance;
+      console.log("Attempting to speak with voice:", utterance.voice ? utterance.voice.name : "DEFAULT/NULL", "Pitch:", utterance.pitch, "Rate:", utterance.rate);
+    
+      console.log(synth.current.paused , "synth.current.pausedsynth.current.pausedsynth.current.pausedsynth.current.pausedsynth.current.pausedsynth.current.pausedsynth.current.pausedsynth.current.pausedsynth.current.pausedsynth.current.paused")
+      // Ensure synthesis is ready and speak
+      if (synth.current.paused) {
+        synth.current.resume();
+      }
+    
+      synth.current.speak(utterance);
   }, [selectedVoice, voicePitch, voiceRate]);
 
   const stopListening = useCallback(() => {
@@ -198,7 +260,7 @@ function App() {
       return;
     }
 
-    setIsSpeaking(true); // Indicate speaking while waiting for backend response
+    // setIsSpeaking(true); // Indicate speaking while waiting for backend response
     setIsListening(false);
     setUserInputText("");
     setUserTranscript("");
