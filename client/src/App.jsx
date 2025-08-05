@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
+import { useTranslation } from './hooks/useTranslation';
+import { voiceMapping } from './translations';
+import LanguageSelector from './components/LanguageSelector';
  
 // --- Static PNG Images for Avatar Selection Options and as default display when not talking ---
 import avatarFemaleAdultPng from './assets/3.png'; // Adult Female PNG
@@ -92,8 +95,9 @@ const Avatar = ({ talking, listening, selectedAvatarData, altText }) => {
  
 // --- Main App Component ---
 function App() {
+  const { currentLanguage, setCurrentLanguage, t, translateWithAI } = useTranslation();
   const [currentQuestion, setCurrentQuestion] = useState("");
-  const [assistantMessage, setAssistantMessage] = useState("Select an avatar to continue.");
+  const [assistantMessage, setAssistantMessage] = useState("");
   const [userTranscript, setUserTranscript] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -105,6 +109,7 @@ function App() {
   const [currentQuestionData, setCurrentQuestionData] = useState(null);
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState(null); // Stores the full avatar object
+  const [languageSelected, setLanguageSelected] = useState(false); // Track if language is selected
  
   // --- New States for Final Confirmation ---
   const [showFinalConfirmation, setShowFinalConfirmation] = useState(false);
@@ -116,6 +121,13 @@ function App() {
   const currentAudioRef = useRef(null); // Reference to current playing audio
   const isMounted = useRef(false);
  
+  // Initialize assistant message only once
+  useEffect(() => {
+    if (!selectedAvatar && !languageSelected && !formStarted) {
+      setAssistantMessage(t('selectAvatar'));
+    }
+  }, [selectedAvatar, languageSelected, formStarted, t]);
+
   // --- Google TTS speakText function ---
     const speakText = useCallback(async (textToSpeak, onEndCallback = null) => {
     console.log("speakText called:", textToSpeak);
@@ -135,14 +147,11 @@ function App() {
     setIsSpeaking(true);
    
     try {
-        const voiceParams = {};
-        if (selectedAvatar) {
-            if (selectedAvatar.voiceName) {
-                voiceParams.voiceName = selectedAvatar.voiceName;
-            }
-            if (selectedAvatar.ssmlGender) {
-                voiceParams.ssmlGender = selectedAvatar.ssmlGender;
-            }
+        const voiceParams = {
+            languageCode: currentLanguage === 'en' ? 'en-US' : currentLanguage === 'es' ? 'es-ES' : 'fr-FR'
+        };
+        if (selectedAvatar && voiceMapping[currentLanguage]) {
+            voiceParams.voiceName = voiceMapping[currentLanguage][selectedAvatar.id];
         }
  
         console.log("Sending TTS request with params:", voiceParams);
@@ -220,7 +229,7 @@ function App() {
         }
         setAssistantMessage("Sorry, I had trouble generating speech. Please try again.");
     }
-}, [selectedAvatar, setAssistantMessage, setIsSpeaking, currentAudioRef]);
+}, [selectedAvatar, setAssistantMessage, setIsSpeaking, currentAudioRef, currentLanguage]);
  
   const stopListening = useCallback(() => {
     if (recognitionRef.current && isListening) {
@@ -230,6 +239,12 @@ function App() {
     }
   }, [isListening]);
  
+  const handleLanguageChange = useCallback(async (newLanguage) => {
+    setCurrentLanguage(newLanguage);
+    setLanguageSelected(true);
+    setAssistantMessage("Language selected. Click 'Start Form' to begin.");
+  }, []);
+
   const sendToBackend = useCallback(async (message, actionType, confirmedOption = null, overrideSessionId = null, questionIdToReAnswer = null) => {
     const currentSessionId = overrideSessionId || sessionId;
     if (!currentSessionId && actionType !== 'init_questionnaire') {
@@ -275,82 +290,71 @@ function App() {
       const normalizedAssistantMessage = Array.isArray(data.assistantMessage) ? data.assistantMessage[0] : data.assistantMessage;
       const normalizedAction = Array.isArray(data.action) ? data.action[0] : data.action;
  
+      // Set the message first so it displays immediately
       setAssistantMessage(normalizedAssistantMessage);
- 
-      // Speak the assistant's message from the backend using Google TTS
-      await speakText(normalizedAssistantMessage, async () => {
-        if (awaitingConfirmation && normalizedAction !== 'confirm_answer') {
-            setAwaitingConfirmation(false);
-        }
- 
-        if (data.responses) {
-          setStoredResponses(data.responses);
-          localStorage.setItem('userQuestionnaireResponses', JSON.stringify(data.responses));
-        }
- 
-        if (normalizedAction === 'ask_readiness') {
-          setCurrentQuestion("");
-          setCurrentQuestionData(null);
-          setReviewingResponses(false); // Exit review mode
-          setShowFinalConfirmation(false); // Hide final confirmation
-          setFinalSubmissionConfirmed(false); // Reset confirmation status
-          if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-            recognitionRef.current.startListeningDirectly();
-          }
-        } else if (normalizedAction === 'ask_question' || normalizedAction === 're_ask') {
-          console.log("Frontend: Action is 'ask_question' or 're_ask'. Setting question to:", data.nextQuestion);
-          setCurrentQuestion(data.nextQuestion);
-          setCurrentQuestionData({ id: data.questionId, question: data.nextQuestion });
-          setReviewingResponses(false); // Exit review mode if re-answering
-          setShowFinalConfirmation(false); // Hide final confirmation
-          setFinalSubmissionConfirmed(false); // Reset confirmation status
-          if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-            recognitionRef.current.startListeningDirectly();
-          }
-        } else if (normalizedAction === 'confirm_answer' && data.predictedOption) {
-          setPredictedOption(data.predictedOption);
-          setAwaitingConfirmation(true);
-          if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-            recognitionRef.current.startListeningDirectly();
-          }
-        } else if (normalizedAction === 'complete') {
-            // Instead of immediately completing, show final confirmation
-            setShowFinalConfirmation(true);
-            setCurrentQuestion("Questionnaire completed. Please review your answers.");
-            setAssistantMessage("I've finished asking all the questions! Would you like to review your responses or are you ready to submit?");
-            await speakText("I've finished asking all the questions! Would you like to review your responses or are you ready to submit?");
-            // DO NOT set formStarted to false or sessionId to null yet
-            // The user must confirm submission
-        } else if (normalizedAction === 'final_submission_complete') {
-            // This action confirms the backend has processed the final submission
-            setCurrentQuestion("Thank you for completing the questionnaire!");
-            setAssistantMessage("Your responses have been successfully submitted. Thank you for your time!");
-            await speakText("Your responses have been successfully submitted. Thank you for your time!");
-            setFormStarted(false); // Now we can end the form
-            setSessionId(null);
-            setShowFinalConfirmation(false); // Hide confirmation UI
-            setReviewingResponses(false);
-            setCurrentReviewIndex(0);
-            setFinalSubmissionConfirmed(true); // SET THIS TO TRUE HERE!
-        } else if (normalizedAction === 'clarify') {
-            if (currentQuestionData) {
-                setCurrentQuestion(currentQuestionData.question);
-            } else if (!currentQuestionData && formStarted) {
-                setCurrentQuestion("");
-            }
-            if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-                recognitionRef.current.startListeningDirectly();
-            }
-        } else {
-          console.warn("Unhandled action from backend:", normalizedAction);
-          if (currentQuestionData) {
+
+      // Handle state updates immediately
+      if (awaitingConfirmation && normalizedAction !== 'confirm_answer') {
+          setAwaitingConfirmation(false);
+      }
+
+      if (data.responses) {
+        setStoredResponses(data.responses);
+        localStorage.setItem('userQuestionnaireResponses', JSON.stringify(data.responses));
+      }
+
+      if (normalizedAction === 'ask_readiness') {
+        setCurrentQuestion("");
+        setCurrentQuestionData(null);
+        setReviewingResponses(false);
+        setShowFinalConfirmation(false);
+        setFinalSubmissionConfirmed(false);
+      } else if (normalizedAction === 'ask_question' || normalizedAction === 're_ask') {
+        console.log("Frontend: Action is 'ask_question' or 're_ask'. Setting question to:", data.nextQuestion);
+        setCurrentQuestion(data.nextQuestion);
+        setCurrentQuestionData({ id: data.questionId, question: data.nextQuestion });
+        setReviewingResponses(false);
+        setShowFinalConfirmation(false);
+        setFinalSubmissionConfirmed(false);
+      } else if (normalizedAction === 'confirm_answer' && data.predictedOption) {
+        setPredictedOption(data.predictedOption);
+        setAwaitingConfirmation(true);
+      } else if (normalizedAction === 'complete') {
+        setShowFinalConfirmation(true);
+        setCurrentQuestion("Questionnaire completed. Please review your answers.");
+      } else if (normalizedAction === 'final_submission_complete') {
+        setCurrentQuestion("Thank you for completing the questionnaire!");
+        setFormStarted(false);
+        setSessionId(null);
+        setShowFinalConfirmation(false);
+        setReviewingResponses(false);
+        setCurrentReviewIndex(0);
+        setFinalSubmissionConfirmed(true);
+      } else if (normalizedAction === 'clarify') {
+        if (currentQuestionData) {
             setCurrentQuestion(currentQuestionData.question);
-          }
-          if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
-            recognitionRef.current.startListeningDirectly();
-          }
+        } else if (!currentQuestionData && formStarted) {
+            setCurrentQuestion("");
         }
-      });
+      } else {
+        console.warn("Unhandled action from backend:", normalizedAction);
+        if (currentQuestionData) {
+          setCurrentQuestion(currentQuestionData.question);
+        }
+      }
+ 
+      // Speak the assistant's message (without callback)
+      speakText(normalizedAssistantMessage);
+      
+      // Start listening after a brief delay if needed
+      setTimeout(() => {
+        if (recognitionRef.current && recognitionRef.current.startListeningDirectly && 
+            (normalizedAction === 'ask_readiness' || normalizedAction === 'ask_question' || 
+             normalizedAction === 're_ask' || normalizedAction === 'confirm_answer' || 
+             normalizedAction === 'clarify')) {
+          recognitionRef.current.startListeningDirectly();
+        }
+      }, 1000);
  
     } catch (error) {
       console.error("Error communicating with backend:", error);
@@ -370,15 +374,14 @@ function App() {
     if (recognitionRef.current && !isListening && !isSpeaking) {
       recognitionRef.current.start();
       setIsListening(true);
-      setAssistantMessage("Listening for your response...");
       setUserTranscript("");
       console.log("SpeechRecognition: Started listening.");
     } else if (isSpeaking) {
-      setAssistantMessage("I'm speaking, please wait.");
+      console.log("Cannot start listening: currently speaking");
     } else if (isListening) {
-      setAssistantMessage("I'm already listening.");
+      console.log("Already listening");
     }
-  }, [isListening, isSpeaking, setUserTranscript, setAssistantMessage]);
+  }, [isListening, isSpeaking, setUserTranscript]);
  
   const initializeSpeechRecognition = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -504,10 +507,10 @@ function App() {
   }, [isSpeaking, startListening]);
  
   useEffect(() => {
-    if (selectedAvatar && !formStarted && !showFinalConfirmation && !finalSubmissionConfirmed) {
-      setAssistantMessage("Click 'Start Form' to begin the questionnaire.");
+    if (selectedAvatar && !languageSelected && !formStarted) {
+      setAssistantMessage("Please select your preferred language.");
     }
-  }, [selectedAvatar, formStarted, showFinalConfirmation, finalSubmissionConfirmed]);
+  }, [selectedAvatar, languageSelected, formStarted]);
  
   useEffect(() => {
     if (isMounted.current) { return; }
@@ -625,8 +628,8 @@ function App() {
       </div>
  
       <div className="interaction-area">
-        {/* Only show avatar selection if form not started and not in final confirmation */}
-        {!formStarted && !showFinalConfirmation && !finalSubmissionConfirmed && (
+        {/* Avatar selection */}
+        {!selectedAvatar && !formStarted && !showFinalConfirmation && !finalSubmissionConfirmed && (
           <div className="start-form-section">
             <h2>Select Your Avatar</h2>
             <div className="avatar-selection" style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
@@ -658,9 +661,27 @@ function App() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Language selection */}
+        {selectedAvatar && !languageSelected && !formStarted && !showFinalConfirmation && !finalSubmissionConfirmed && (
+          <div className="start-form-section">
+            <h2>Select Your Language</h2>
+            <LanguageSelector 
+              currentLanguage={currentLanguage}
+              onLanguageChange={handleLanguageChange}
+              t={t}
+            />
+          </div>
+        )}
+
+        {/* Start form button */}
+        {selectedAvatar && languageSelected && !formStarted && !showFinalConfirmation && !finalSubmissionConfirmed && (
+          <div className="start-form-section">
             <button
               onClick={startConversation}
-              disabled={!selectedAvatar || isSpeaking || sessionId !== null}
+              disabled={isSpeaking || sessionId !== null}
             >
               Start Form
             </button>
@@ -707,10 +728,10 @@ function App() {
                 <div className="user-controls">
                     <div className="button-group">
                         <button onClick={handleStartListening} disabled={isListening || isSpeaking}>
-                            {isListening ? "Listening..." : "Speak Your Answer"}
+                            {isListening ? t('ui.stopListening') : t('ui.startListening')}
                         </button>
                         <button onClick={stopListening} disabled={!isListening}>
-                            Stop Listening
+                            {t('ui.stopListening')}
                         </button>
                     </div>
  
@@ -719,11 +740,11 @@ function App() {
                             type="text"
                             value={userInputText}
                             onChange={(e) => setUserInputText(e.target.value)}
-                            placeholder="Type your new answer or 'No' to keep it..."
+                            placeholder={t('ui.typeResponse')}
                             disabled={isSpeaking || isListening}
                         />
                         <button onClick={handleManualSubmit} disabled={isSpeaking || isListening || userInputText.trim() === ""}>
-                            Submit Text
+                            {t('ui.send')}
                         </button>
                     </div>
  
@@ -759,10 +780,10 @@ function App() {
             <div className="user-controls">
               <div className="button-group">
                 <button onClick={handleStartListening} disabled={isListening || isSpeaking}>
-                  {isListening ? "Listening..." : "Speak Your Answer"}
+                  {isListening ? t('ui.stopListening') : t('ui.startListening')}
                 </button>
                 <button onClick={stopListening} disabled={!isListening}>
-                  Stop Listening
+                  {t('ui.stopListening')}
                 </button>
               </div>
  
@@ -771,11 +792,11 @@ function App() {
                   type="text"
                   value={userInputText}
                   onChange={(e) => setUserInputText(e.target.value)}
-                  placeholder="Type your answer here..."
+                  placeholder={t('ui.typeResponse')}
                   disabled={isSpeaking || isListening}
                 />
                 <button onClick={handleManualSubmit} disabled={isSpeaking || isListening || userInputText.trim() === ""}>
-                  Submit Text
+                  {t('ui.send')}
                 </button>
               </div>
  

@@ -4,6 +4,7 @@ const cors = require('cors');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const textToSpeech = require('@google-cloud/text-to-speech');
 const { v1 } = require('@google-cloud/text-to-speech');
+const { Translate } = require('@google-cloud/translate').v2;
  
  
 const app = express();
@@ -28,6 +29,9 @@ const questions = [
 ];
 // --- Google Cloud Text-to-Speech Setup ---
 const ttsClient = new textToSpeech.TextToSpeechClient({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
+
+// --- Google Cloud Translate Setup ---
+const translateClient = new Translate({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
  
 // const ttsClient = new TextToSpeechClient({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
  
@@ -626,6 +630,23 @@ app.post('/api/google-tts/speak', async (req, res) => {
     }
 });
  
+// Translation endpoint
+app.post('/api/translate', async (req, res) => {
+    const { text, targetLanguage } = req.body;
+    
+    if (!text || !targetLanguage) {
+        return res.status(400).json({ error: 'Missing text or targetLanguage' });
+    }
+
+    try {
+        const [translation] = await translateClient.translate(text, targetLanguage);
+        res.json({ translatedText: translation });
+    } catch (error) {
+        console.error('Translation error:', error);
+        res.status(500).json({ error: 'Translation failed' });
+    }
+});
+
 app.listen(port, () => {
     console.log(`Backend server running on http://localhost:${port}`);
     console.log(`Ensure your GEMINI_API_KEY is set in your .env file.`);
