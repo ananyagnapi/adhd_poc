@@ -28,10 +28,22 @@ const questions = [
     { id: "2", question: "How often do you misplace or lose things like keys, wallet, or phone?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] }
 ];
 // --- Google Cloud Text-to-Speech Setup ---
-const ttsClient = new textToSpeech.TextToSpeechClient({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
+const ttsClient = new textToSpeech.TextToSpeechClient({
+  projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+  credentials: {
+    client_email: process.env.GOOGLE_CLOUD_CLIENT_EMAIL,
+    private_key: process.env.GOOGLE_CLOUD_PRIVATE_KEY?.replace(/\\n/g, '\n')
+  }
+});
 
 // --- Google Cloud Translate Setup ---
-const translateClient = new Translate({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
+const translateClient = new Translate({
+  projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+  credentials: {
+    client_email: process.env.GOOGLE_CLOUD_CLIENT_EMAIL,
+    private_key: process.env.GOOGLE_CLOUD_PRIVATE_KEY?.replace(/\\n/g, '\n')
+  }
+});
  
 // const ttsClient = new TextToSpeechClient({ keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS });
  
