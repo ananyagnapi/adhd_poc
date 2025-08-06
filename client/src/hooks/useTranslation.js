@@ -4,10 +4,12 @@ import { translations } from '../translations';
 const API_BASE_URL = 'http://localhost:3001/api';
 
 export const useTranslation = () => {
-  const [currentLanguage, setCurrentLanguage] = useState('en');
+  const [currentLanguage, setCurrentLanguage] = useState('');
   const [translationCache, setTranslationCache] = useState({});
 
   const t = (key, fallback = key) => {
+    if (!currentLanguage) return fallback;
+    
     const keys = key.split('.');
     let value = translations[currentLanguage];
     
