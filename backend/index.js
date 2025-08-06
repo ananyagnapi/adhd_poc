@@ -601,14 +601,14 @@ app.post('/api/chat', async (req, res) => {
  
  
 app.post('/api/google-tts/speak', async (req, res) => {
-    const { text, voiceName, ssmlGender } = req.body;
+    const { text, voiceName, ssmlGender, languageCode } = req.body;
     if (!text) {
         return res.status(400).json({ error: 'Missing text in the request body.' });
     }
  
     // Dynamic voice selection logic
     const voiceParams = {
-        languageCode: 'en-US',
+        languageCode: languageCode || 'en-US',
     };
  
     if (voiceName) {
@@ -652,6 +652,7 @@ app.post('/api/translate', async (req, res) => {
 
     try {
         const [translation] = await translateClient.translate(text, targetLanguage);
+        console.log(`Translated text from ${text} to ${targetLanguage}:`, translation);
         res.json({ translatedText: translation });
     } catch (error) {
         console.error('Translation error:', error);

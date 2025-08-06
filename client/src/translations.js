@@ -62,13 +62,35 @@ export const translations = {
       send: "Envoyer",
       selectLanguage: "Sélectionner la Langue"
     }
+  },
+  hi: {
+    selectAvatar: "जारी रखने के लिए एक अवतार चुनें।",
+    question1: "आपके आसपास विकर्षण होने पर किसी कार्य पर ध्यान केंद्रित करना कितनी बार कठिन लगता है?",
+    question2: "आप कितनी बार अपॉइंटमेंट या महत्वपूर्ण तारीखें भूल जाते हैं?",
+    question3: "आप कितनी बार चाबी, बटुआ या फोन जैसी चीजें खो देते हैं?",
+    options: {
+      never: "कभी नहीं",
+      rarely: "शायद ही कभी",
+      sometimes: "कभी कभी",
+      often: "अक्सर",
+      veryOften: "बहुत अक्सर"
+    },
+    ui: {
+      startListening: "सुनना शुरू करें",
+      stopListening: "सुनना बंद करें",
+      repeatQuestion: "प्रश्न दोहराएं",
+      typeResponse: "अपना उत्तर टाइप करें...",
+      send: "भेजें",
+      selectLanguage: "भाषा चुनें"
+    }
   }
 };
 
 export const supportedLanguages = [
   { code: 'en', name: 'English', flag: '🇺🇸' },
   { code: 'es', name: 'Español', flag: '🇪🇸' },
-  { code: 'fr', name: 'Français', flag: '🇫🇷' }
+  { code: 'fr', name: 'Français', flag: '🇫🇷' },
+  { code: 'hi', name: 'हिन्दी', flag: '🇮🇳' }
 ];
 
 // Voice mappings for different languages
@@ -90,5 +112,11 @@ export const voiceMapping = {
     maleAdult: 'fr-FR-Wavenet-B',
     smallGirl: 'fr-FR-Wavenet-A',
     smallBoy: 'fr-FR-Wavenet-B'
+  },
+  hi: {
+    femaleAdult: 'hi-IN-Wavenet-A',
+    maleAdult: 'hi-IN-Wavenet-B',
+    smallGirl: 'hi-IN-Wavenet-A',
+    smallBoy: 'hi-IN-Wavenet-B'
   }
 };

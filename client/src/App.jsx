@@ -124,9 +124,9 @@ function App() {
   // Initialize assistant message only once
   useEffect(() => {
     if (!selectedAvatar && !languageSelected && !formStarted) {
-      setAssistantMessage(t('selectAvatar'));
+      setAssistantMessage('Select an avatar to continue.');
     }
-  }, [selectedAvatar, languageSelected, formStarted, t]);
+  }, [selectedAvatar, languageSelected, formStarted]);
 
   // --- Google TTS speakText function ---
     const speakText = useCallback(async (textToSpeak, onEndCallback = null) => {
@@ -148,7 +148,7 @@ function App() {
    
     try {
         const voiceParams = {
-            languageCode: currentLanguage === 'en' ? 'en-US' : currentLanguage === 'es' ? 'es-ES' : 'fr-FR'
+            languageCode: currentLanguage === 'en' ? 'en-US' : currentLanguage === 'es' ? 'es-ES' : currentLanguage === 'fr' ? 'fr-FR' : 'hi-IN'
         };
         if (selectedAvatar && voiceMapping[currentLanguage]) {
             voiceParams.voiceName = voiceMapping[currentLanguage][selectedAvatar.id];
@@ -290,8 +290,18 @@ function App() {
       const normalizedAssistantMessage = Array.isArray(data.assistantMessage) ? data.assistantMessage[0] : data.assistantMessage;
       const normalizedAction = Array.isArray(data.action) ? data.action[0] : data.action;
  
-      // Set the message first so it displays immediately
-      setAssistantMessage(normalizedAssistantMessage);
+      // Translate the assistant message if needed
+      let translatedMessage = normalizedAssistantMessage;
+      if (currentLanguage !== 'en') {
+        try {
+          translatedMessage = await translateWithAI(normalizedAssistantMessage, currentLanguage);
+        } catch (error) {
+          console.warn('Failed to translate assistant message:', error);
+        }
+      }
+      
+      // Set the translated message
+      setAssistantMessage(translatedMessage);
 
       // Handle state updates immediately
       if (awaitingConfirmation && normalizedAction !== 'confirm_answer') {
@@ -343,8 +353,8 @@ function App() {
         }
       }
  
-      // Speak the assistant's message (without callback)
-      speakText(normalizedAssistantMessage);
+      // Speak the translated assistant's message
+      speakText(translatedMessage);
       
       // Start listening after a brief delay if needed
       setTimeout(() => {
@@ -368,7 +378,7 @@ function App() {
       });
       setIsSpeaking(false);
     }
-  }, [sessionId, speakText, currentQuestionData, isListening, currentQuestion, setAssistantMessage, setStoredResponses, setUserTranscript, awaitingConfirmation]);
+  }, [sessionId, speakText, currentQuestionData, isListening, currentQuestion, awaitingConfirmation, currentLanguage]);
  
   const startListening = useCallback(() => {
     if (recognitionRef.current && !isListening && !isSpeaking) {
@@ -667,7 +677,7 @@ function App() {
         {/* Language selection */}
         {selectedAvatar && !languageSelected && !formStarted && !showFinalConfirmation && !finalSubmissionConfirmed && (
           <div className="start-form-section">
-            <h2>Select Your Language</h2>
+            {/* <h2>Select Your Language</h2> */}
             <LanguageSelector 
               currentLanguage={currentLanguage}
               onLanguageChange={handleLanguageChange}
