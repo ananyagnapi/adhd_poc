@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
 import './App.css';
 import { useTranslation } from './hooks/useTranslation';
 import { voiceMapping } from './translations';
 import LanguageSelector from './components/LanguageSelector';
+import Admin from './components/Admin';
  
 // --- Static PNG Images for Avatar Selection Options and as default display when not talking ---
 import avatarFemaleAdultPng from './assets/3.png'; // Adult Female PNG
@@ -93,8 +95,8 @@ const Avatar = ({ talking, listening, selectedAvatarData, altText }) => {
   );
 };
  
-// --- Main App Component ---
-function App() {
+// --- Main Questionnaire Component ---
+function Questionnaire() {
   const { currentLanguage, setCurrentLanguage, t, translateWithAI } = useTranslation();
   const [currentQuestion, setCurrentQuestion] = useState("");
   const [assistantMessage, setAssistantMessage] = useState("");
@@ -623,7 +625,10 @@ function App() {
  
   return (
     <div className="app-container">
-      <h1>ADHD Form Assistant</h1>
+      <div className="app-header">
+        <h1>ADHD Form Assistant</h1>
+        <Link to="/admin" className="admin-link">Admin Panel</Link>
+      </div>
  
       <div className="avatar-section">
         <Avatar
@@ -840,6 +845,18 @@ function App() {
         )}
       </div>
     </div>
+  );
+}
+
+// --- Main App Component with Routing ---
+function App() {
+  return (
+    <Router>
+      <Routes>
+        <Route path="/" element={<Questionnaire />} />
+        <Route path="/admin" element={<Admin />} />
+      </Routes>
+    </Router>
   );
 }
  

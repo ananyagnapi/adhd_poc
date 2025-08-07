@@ -22,11 +22,34 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
  
 // --- Questions ---
-const questions = [
-    { id: "0", question: "How often do you find it difficult to focus on a task when there are distractions around you?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] },
-    { id: "1", question: "How often do you forget appointments or important dates?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] },
-    { id: "2", question: "How often do you misplace or lose things like keys, wallet, or phone?", options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"] }
+let questions = [
+    { 
+        id: "0", 
+        question: "How often do you find it difficult to focus on a task when there are distractions around you?", 
+        type: "options", 
+        options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"],
+        translations: {
+            es: { question: "¿Con qué frecuencia te resulta difícil concentrarte en una tarea cuando hay distracciones a tu alrededor?", options: ["Nunca", "Raramente", "A veces", "A menudo", "Muy a menudo"], approved: false },
+            hi: { question: "आपके आसपास विकर्षण होने पर किसी कार्य पर ध्यान केंद्रित करना कितनी बार कठिन लगता है?", options: ["कभी नहीं", "शायद ही कभी", "कभी कभी", "अक्सर", "बहुत अक्सर"], approved: false }
+        }
+    },
+    { 
+        id: "1", 
+        question: "How often do you forget appointments or important dates?", 
+        type: "options", 
+        options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"],
+        translations: {
+            es: { question: "¿Con qué frecuencia olvidas citas o fechas importantes?", options: ["Nunca", "Raramente", "A veces", "A menudo", "Muy a menudo"], approved: false },
+            hi: { question: "आप कितनी बार अपॉइंटमेंट या महत्वपूर्ण तारीखें भूल जाते हैं?", options: ["कभी नहीं", "शायद ही कभी", "कभी कभी", "अक्सर", "बहुत अक्सर"], approved: false }
+        }
+    }
 ];
+
+// Helper function to get next available ID
+function getNextQuestionId() {
+    const maxId = questions.length > 0 ? Math.max(...questions.map(q => parseInt(q.id))) : -1;
+    return (maxId + 1).toString();
+}
 // --- Google Cloud Text-to-Speech Setup ---
 const ttsClient = new textToSpeech.TextToSpeechClient({
   projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
@@ -220,7 +243,11 @@ app.post('/api/chat', async (req, res) => {
                     questionIdToFrontend = firstQuestion.id;
                     actionToFrontend = 'ask_question';
                     currentQuestionIndex = 0;
-                    assistantMessage = `${assistantMessage} Question ${parseInt(firstQuestion.id) + 1}: ${nextQuestionText}. The options are: ${firstQuestion.options.join(', ')}.`;
+                    if (firstQuestion.type === 'freetext') {
+                        assistantMessage = `${assistantMessage} Question ${parseInt(firstQuestion.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
+                    } else {
+                        assistantMessage = `${assistantMessage} Question ${parseInt(firstQuestion.id) + 1}: ${nextQuestionText}. The options are: ${firstQuestion.options.join(', ')}.`;
+                    }
                     session.lastQuestionOptions = firstQuestion.options;
                     session.currentQuestionIndex = currentQuestionIndex;
                 } else {
@@ -246,12 +273,34 @@ app.post('/api/chat', async (req, res) => {
                 throw new Error("Invalid or outdated question context for answer/re_answer action.");
             }
  
-            const answerPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
+            let answerPrompt;
+            if (currentQuestionObj.type === 'freetext') {
+                answerPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
+                The current question being answered is: "${currentQuestionObj.question}".
+                This is a FREE TEXT question - the user can provide any response in their own words.
+                There are a total of ${questions.length} questions. The current question is question number ${parseInt(currentQuestionObj.id) + 1}.`;
+            } else {
+                answerPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
                 The current question being answered is: "${currentQuestionObj.question}".
                 The user's response options are: ${currentQuestionObj.options.join(', ')}.
-                There are a total of ${questions.length} questions. The current question is question number ${parseInt(currentQuestionObj.id) + 1}.
+                There are a total of ${questions.length} questions. The current question is question number ${parseInt(currentQuestionObj.id) + 1}.`;
+            }
  
-                Based on the user's last input "${userMessage}", categorize their answer.
+            answerPrompt += `
+                Based on the user's last input "${userMessage}", categorize their answer.`;
+            
+            if (currentQuestionObj.type === 'freetext') {
+                answerPrompt += `
+                For FREE TEXT questions, you MUST respond with one of the following actions:
+                - "ask_question": If the user provides any meaningful response (even if brief), and there are more questions remaining after this one.
+                    The "assistantMessage" should be a *simple acknowledgement* (e.g., "Thank you for sharing.", "I understand.", "Got it."). The backend will append the next question.
+                - "complete": If the user provides any meaningful response, and this is the *last* question.
+                    The "assistantMessage" should be a *simple acknowledgement* (e.g., "Thank you for your response.", "I appreciate your input."). The backend will generate the completion message.
+                - "repeat_question_gemini_detected": If the user's input clearly asks to repeat the question (e.g., "repeat that", "say it again", "what was the question?", "can you repeat?").
+                    The "assistantMessage" should be a confirmation (e.g., "Certainly, here is the question again." or "No problem, listening again for this question.").
+                - "clarify": If the input is completely irrelevant, uninterpretable, or asks a non-explanation related question that is *not* a repeat request, ask for clarification by encouraging them to share their thoughts or experiences related to the question.`;
+            } else {
+                answerPrompt += `
                 You MUST respond with one of the following actions:
                 - "ask_question": If the user's input clearly indicates one of the fixed options, and there are more questions remaining after this one.
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Okay.", "Got it."). The backend will append the next question.
@@ -262,14 +311,17 @@ app.post('/api/chat', async (req, res) => {
                     (e.g., "I think you mean [Inferred Option]. Is that correct (yes/no), or would you like to choose from ${currentQuestionObj.options.join(', ')}?").
                 - "repeat_question_gemini_detected": If the user's input clearly asks to repeat the question (e.g., "repeat that", "say it again", "what was the question?", "can you repeat?").
                     The "assistantMessage" should be a confirmation (e.g., "Certainly, here is the question again." or "No problem, listening again for this question.").
-                - "clarify": If the input is completely irrelevant, uninterpretable, or asks a non-explanation related question that is *not* a repeat request, ask for clarification by prompting them to choose from the given options or rephrase their answer.
+                - "clarify": If the input is completely irrelevant, uninterpretable, or asks a non-explanation related question that is *not* a repeat request, ask for clarification by prompting them to choose from the given options or rephrase their answer.`;
+            }
+            
+            answerPrompt += `
  
                 Provide your response as a JSON object with the following keys:
                 - "assistantMessage": [string, the text the assistant should say to the user *before* the next question is appended by the backend, or the full clarification message.]
                 - "predictedOption": [string, the inferred option for "clarify_and_confirm" action, otherwise null.]
                 - "action": [string, "ask_question", "clarify_and_confirm", "clarify", "complete", "repeat_question_gemini_detected"]
                 - "questionId": [string, the ID of the *current* question for "clarify", "clarify_and_confirm", "repeat_question_gemini_detected", or the ID of the *next* question for "ask_question"/"complete".]
-                - "confirmedAnswer": [string, the fixed option if the answer is clear, otherwise null. This is for your internal backend use to save the response.]
+                - "confirmedAnswer": [string, for options-based questions: the fixed option if the answer is clear. For free text questions: the user's actual response. Otherwise null. This is for your internal backend use to save the response.]
  
                 Strictly output only the JSON object. Do not include any other text outside the JSON.
  
@@ -323,8 +375,12 @@ app.post('/api/chat', async (req, res) => {
                     const nextQ = questions[currentQuestionIndex];
                     nextQuestionText = nextQ.question;
                     questionIdToFrontend = nextQ.id;
-                    session.lastQuestionOptions = nextQ.options;
-                    assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. The options are: ${nextQ.options.join(', ')}.`;
+                    session.lastQuestionOptions = nextQ.options || [];
+                    if (nextQ.type === 'freetext') {
+                        assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
+                    } else {
+                        assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. The options are: ${nextQ.options.join(', ')}.`;
+                    }
                 } else {
                     // All questions answered, transition to 'complete'
                     actionToFrontend = 'complete';
@@ -354,7 +410,11 @@ app.post('/api/chat', async (req, res) => {
                 session.lastQuestionOptions = currentQuestionObj.options;
                 nextQuestionText = currentQuestionObj.question; // Repeat the question text for re_ask/clarify
                 if (actionToFrontend === 'repeat_question_gemini_detected') {
-                     assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. The options are: ${currentQuestionObj.options.join(', ')}.`;
+                    if (currentQuestionObj.type === 'freetext') {
+                        assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
+                    } else {
+                        assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. The options are: ${currentQuestionObj.options.join(', ')}.`;
+                    }
                 } else {
                     assistantMessage = geminiAssistantMessage; // Gemini provides the full message
                 }
@@ -472,8 +532,12 @@ app.post('/api/chat', async (req, res) => {
                             const nextQ = questions[currentQuestionIndex];
                             nextQuestionText = nextQ.question;
                             questionIdToFrontend = nextQ.id;
-                            session.lastQuestionOptions = nextQ.options;
-                            assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. The options are: ${nextQ.options.join(', ')}.`;
+                            session.lastQuestionOptions = nextQ.options || [];
+                            if (nextQ.type === 'freetext') {
+                                assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
+                            } else {
+                                assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. The options are: ${nextQ.options.join(', ')}.`;
+                            }
                         } else {
                             actionToFrontend = 'complete';
                             assistantMessage = "That's the last question! I'm now summarizing your responses.";
@@ -494,7 +558,11 @@ app.post('/api/chat', async (req, res) => {
                     // currentQuestionIndex and questionIdToFrontend are already set from confirmData/currentQuestionObj
                     nextQuestionText = currentQuestionObj.question; // Repeat the question text for re_ask/clarify
                     if (actionToFrontend === 'repeat_question_gemini_detected') {
-                         assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. The options are: ${currentQuestionObj.options.join(', ')}.`;
+                        if (currentQuestionObj.type === 'freetext') {
+                            assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
+                        } else {
+                            assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. The options are: ${currentQuestionObj.options.join(', ')}.`;
+                        }
                     } else {
                         assistantMessage = geminiAssistantMessage; // Gemini provides the full message
                     }
@@ -525,7 +593,11 @@ app.post('/api/chat', async (req, res) => {
                 // Return an error response immediately
                 return res.status(400).json({ assistantMessage: "There's no active question to repeat.", action: "error", questionId: null, currentQuestionIndex: session.currentQuestionIndex, nextQuestion: null, responses: userResponses });
             }
-            assistantMessage = `${currentQuestionObj.question} The options are: ${currentQuestionObj.options.join(', ')}.`;
+            if (currentQuestionObj.type === 'freetext') {
+                assistantMessage = `${currentQuestionObj.question} Please provide your answer in your own words.`;
+            } else {
+                assistantMessage = `${currentQuestionObj.question} The options are: ${currentQuestionObj.options.join(', ')}.`;
+            }
             actionToFrontend = 're_ask';
             nextQuestionText = currentQuestionObj.question;
             questionIdToFrontend = currentQuestionObj.id;
@@ -660,7 +732,161 @@ app.post('/api/translate', async (req, res) => {
     }
 });
 
+// Admin endpoints for question management
+app.get('/api/admin/questions', (req, res) => {
+    res.json(questions);
+});
+
+app.post('/api/admin/questions', async (req, res) => {
+    const { question, type, options, language } = req.body;
+    
+    if (!question || !question.trim()) {
+        return res.status(400).json({ error: 'Question is required' });
+    }
+
+    if (type === 'options' && (!options || !Array.isArray(options) || options.length < 2)) {
+        return res.status(400).json({ error: 'Options-based questions require at least 2 options' });
+    }
+
+    const newQuestion = {
+        id: getNextQuestionId(),
+        question: question.trim(),
+        type: type || 'options'
+    };
+
+    if (type === 'options') {
+        newQuestion.options = options.map(opt => opt.trim()).filter(opt => opt.length > 0);
+    }
+
+    // Auto-translate to other languages if adding in English
+    if (language === 'en') {
+        newQuestion.translations = {};
+        try {
+            // Translate to Spanish
+            const [esQuestion] = await translateClient.translate(newQuestion.question, 'es');
+            newQuestion.translations.es = { question: esQuestion, approved: false };
+            
+            if (newQuestion.options) {
+                const [esOptions] = await translateClient.translate(newQuestion.options, 'es');
+                newQuestion.translations.es.options = esOptions;
+            }
+
+            // Translate to Hindi
+            const [hiQuestion] = await translateClient.translate(newQuestion.question, 'hi');
+            newQuestion.translations.hi = { question: hiQuestion, approved: false };
+            
+            if (newQuestion.options) {
+                const [hiOptions] = await translateClient.translate(newQuestion.options, 'hi');
+                newQuestion.translations.hi.options = hiOptions;
+            }
+        } catch (error) {
+            console.error('Translation error:', error);
+        }
+    }
+
+    questions.push(newQuestion);
+    res.status(201).json(newQuestion);
+});
+
+app.put('/api/admin/questions/:id', async(req, res) => {
+    const { id } = req.params;
+    const { question, type, options, language } = req.body;
+    
+    if (!question || !question.trim()) {
+        return res.status(400).json({ error: 'Question is required' });
+    }
+
+    if (type === 'options' && (!options || !Array.isArray(options) || options.length < 2)) {
+        return res.status(400).json({ error: 'Options-based questions require at least 2 options' });
+    }
+
+    const questionIndex = questions.findIndex(q => q.id === id.split('_')[0]);
+    if (questionIndex === -1) {
+        return res.status(404).json({ error: 'Question not found' });
+    }
+
+    const targetLanguage = language || 'en';
+    
+    if (targetLanguage === 'en') {
+        questions[questionIndex].question = question.trim();
+        questions[questionIndex].type = type || 'options';
+        if (type === 'options') {
+            questions[questionIndex].options = options.map(opt => opt.trim()).filter(opt => opt.length > 0);
+        }
+        
+        // Auto-translate updated English question
+        try {
+            const [esQuestion] = await translateClient.translate(question.trim(), 'es');
+            if (!questions[questionIndex].translations) questions[questionIndex].translations = {};
+            questions[questionIndex].translations.es = { question: esQuestion, approved: false };
+            
+            if (type === 'options') {
+                const [esOptions] = await translateClient.translate(questions[questionIndex].options, 'es');
+                questions[questionIndex].translations.es.options = esOptions;
+            }
+
+            const [hiQuestion] = await translateClient.translate(question.trim(), 'hi');
+            questions[questionIndex].translations.hi = { question: hiQuestion, approved: false };
+            
+            if (type === 'options') {
+                const [hiOptions] = await translateClient.translate(questions[questionIndex].options, 'hi');
+                questions[questionIndex].translations.hi.options = hiOptions;
+            }
+        } catch (error) {
+            console.error('Translation error:', error);
+        }
+    } else {
+        if (!questions[questionIndex].translations) {
+            questions[questionIndex].translations = {};
+        }
+        questions[questionIndex].translations[targetLanguage] = {
+            question: question.trim(),
+            approved: false
+        };
+        if (type === 'options') {
+            questions[questionIndex].translations[targetLanguage].options = options.map(opt => opt.trim()).filter(opt => opt.length > 0);
+        }
+    }
+
+    res.json(questions[questionIndex]);
+});
+
+app.post('/api/admin/questions/:id/approve', (req, res) => {
+    const { id } = req.params;
+    const { language } = req.body;
+    
+    const question = questions.find(q => q.id === id);
+    if (!question) {
+        return res.status(404).json({ error: 'Question not found' });
+    }
+
+    if (question.translations && question.translations[language]) {
+        question.translations[language].approved = true;
+    }
+    
+    res.json({ message: 'Translation approved', question });
+});
+
+app.delete('/api/admin/questions/:id', (req, res) => {
+    const { id } = req.params;
+    const questionIndex = questions.findIndex(q => q.id === id);
+    
+    if (questionIndex === -1) {
+        return res.status(404).json({ error: 'Question not found' });
+    }
+
+    const deletedQuestion = questions.splice(questionIndex, 1)[0];
+    
+    // Reorder IDs to maintain sequence
+    questions.forEach((q, index) => {
+        q.id = index.toString();
+    });
+    
+    res.json({ message: 'Question deleted in all languages', deletedQuestion });
+});
+
 app.listen(port, () => {
     console.log(`Backend server running on http://localhost:${port}`);
     console.log(`Ensure your GEMINI_API_KEY is set in your .env file.`);
+    console.log(`Admin panel available at: http://localhost:5173/admin`);
 });
