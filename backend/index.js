@@ -5,7 +5,8 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const textToSpeech = require('@google-cloud/text-to-speech');
 const { v1 } = require('@google-cloud/text-to-speech');
 const { Translate } = require('@google-cloud/translate').v2;
- 
+const connectMongo = require('./db_service/connection');
+
  
 const app = express();
 const port = process.env.PORT || 3001;
@@ -703,12 +704,20 @@ app.post('/api/translate', async (req, res) => {
         res.status(500).json({ error: 'Translation failed' });
     }
 });
-
-// Initialize admin routes
+ 
+// REGISTER ADMIN ROUTES
 adminRoutes(app);
 
-app.listen(port, () => {
-    console.log(`Backend server running on http://localhost:${port}`);
-    console.log(`Ensure your GEMINI_API_KEY is set in your .env file.`);
-    console.log(`Admin panel available at: http://localhost:5173/admin`);
+// FIXED: Use the port variable consistently and add error handling
+connectMongo().then(() => {
+    console.log("Database Connected successfully");
+    app.listen(port, () => {
+        console.log(`Server is running on port ${port}`);
+        console.log(`Admin API available at: http://localhost:${port}/api/admin/questions`);
+        console.log(`Test endpoint: http://localhost:${port}/test`);
+    });
+}).catch((err) => {
+    console.log("Database Connection Failed", err);
+    process.exit(1);
 });
+

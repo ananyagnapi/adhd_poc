@@ -5,12 +5,14 @@ import { useTranslation } from './hooks/useTranslation';
 import { voiceMapping } from './translations';
 import LanguageSelector from './components/LanguageSelector';
 import Admin from './components/Admin';
- 
 // --- Static PNG Images for Avatar Selection Options and as default display when not talking ---
 import avatarFemaleAdultPng from './assets/3.png'; // Adult Female PNG
 import avatarMaleAdultPng from './assets/2.png';  // Adult Male PNG
 import avatarSmallBoyPng from './assets/1.png';   // Small Boy PNG
 import avatarSmallGirlPng from './assets/4.png';  // Small Girl PNG
+import axios from 'axios';
+import { useDispatch } from 'react-redux'
+import { addAllQuetions } from './slices/quetionSlice'
  
 // --- GIF Images for Avatar Talking States (Import only the talking GIFs) ---
 // ADULT FEMALE
@@ -24,8 +26,7 @@ import smallBoyTalkingGif from './assets/1.gif';
  
 // SMALL GIRL
 import smallGirlTalkingGif from './assets/4.gif';
- 
- 
+
 const API_BASE_URL = 'http://localhost:3001/api';
  
 // --- Avatar Data Array with Names, PNGs, and only Talking GIF paths (Ordered) ---
@@ -122,13 +123,28 @@ function Questionnaire() {
   const recognitionRef = useRef(null);
   const currentAudioRef = useRef(null); // Reference to current playing audio
   const isMounted = useRef(false);
- 
+  const dispatch = useDispatch()
+  
   // Initialize assistant message only once
   useEffect(() => {
     if (!selectedAvatar && !languageSelected && !formStarted) {
       setAssistantMessage('Select an avatar to continue.');
     }
   }, [selectedAvatar, languageSelected, formStarted]);
+
+  useEffect(() => {
+    const questionData = async () => {
+      try {
+        const response = await axios.get(`${API_BASE_URL}/admin/questions`);
+        dispatch(addAllQuetions(response.data))
+        console.log('response data:', response);
+      } catch (error) {
+        console.error('Error fetching questions:', error);
+      }
+    };
+    questionData();
+  }, []);
+
 
   // --- Google TTS speakText function ---
     const speakText = useCallback(async (textToSpeak, onEndCallback = null) => {
