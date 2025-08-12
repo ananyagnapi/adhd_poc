@@ -83,14 +83,14 @@ const adminRoutes = (app) => {
         const questionnaireDoc = await Questionnaire.create({ title: title.trim() });
         const qid = questionnaireDoc._id;
 
-        // 🔸 Step 3: Create base question data template
         const baseQuestionData = {
-            question_type: type,
-            created_at: new Date().toISOString(),
-            created_by: null,
-            updated_by: null,
-            qid: qid
-        };
+        question_type: type,
+        created_at: new Date().toISOString(),
+        created_by: null,
+        updated_by: null,
+        qid: qid,
+        title: title.trim()  // <- Add this line
+    };
 
         // 🔸 Step 4: Create questions for all languages
         const createdQuestions = [];
@@ -124,27 +124,25 @@ const adminRoutes = (app) => {
                 }
             }
 
-            // 🔸 Step 5: Create question document for this language
             const questionDoc = new Question({
                 ...baseQuestionData,
                 question_text: questionText,
                 language: langCode,
-                is_approved: langCode === detectedLanguage, // Only detected language is approved by default
-                status: langCode === detectedLanguage ? 'approved' : 'pending'
+                is_approved: langCode === detectedLanguage,
+                status: langCode === detectedLanguage ? 'approved' : 'pending',
+                title: title.trim()  // <- Add this line
             });
 
             await questionDoc.save();
             createdQuestions.push(questionDoc);
 
-            // 🔸 Step 6: Create options for this language (if applicable)
             if (type === 'options' && questionOptions.length > 0) {
                 const optionDocs = questionOptions.map((opt, i) => ({
                     question_id: questionDoc._id,
                     option_text: opt,
                     sort_order: i,
                     language: langCode,
-                    is_approved: langCode === detectedLanguage, // Only detected language options are approved
-                    status: langCode === detectedLanguage ? 'approved' : 'pending',
+                    is_approved: langCode === detectedLanguage, 
                     created_at: new Date().toISOString(),
                     created_by: null,
                     updated_by: null
@@ -153,23 +151,24 @@ const adminRoutes = (app) => {
             }
         }
 
-        // 🔸 Step 7: Return all created questions
-        const response = {
+         const response = {
             message: 'Questions created successfully in all languages',
             detected_language: detectedLanguage,
             questionnaire_id: qid,
+            questionnaire_title: title.trim(), 
             questions: createdQuestions.map(q => ({
-                _id: q._id,
-                question_text: q.question_text,
-                language: q.language,
-                question_type: q.question_type,
-                is_approved: q.is_approved,
-                created_at: q.created_at,
-                created_by: q.created_by,
-                updated_by: q.updated_by,
-                status: q.status,
-                qid: q.qid
-            })),
+    _id: q._id,
+    question_text: q.question_text,
+    language: q.language,
+    question_type: q.question_type,
+    is_approved: q.is_approved,
+    created_at: q.created_at,
+    created_by: q.created_by,
+    updated_by: q.updated_by,
+    status: q.status,
+    qid: q.qid,
+    title: q.title  // <- This uses the title from the saved document
+})),
             total_questions_created: createdQuestions.length,
             languages_created: SUPPORTED_LANGUAGES
         };

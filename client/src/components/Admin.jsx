@@ -240,15 +240,17 @@ const Admin = () => {
   };
 
   const handleEditTranslation = (question, language) => {
-    console.log('Editing question:', question);
     
-    // Set form state with the question data
-    setNewQuestion({
-      title: newQuestion.title,
-      question: question.question_text || '',
-      type: question.question_type || 'options',
-      options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
-    });
+     console.log('Editing question:', question);
+  
+  setNewQuestion({
+    title: question.title || 'Default Questionnaire',  // <- Use question's title from backend
+    question: question.question_text || '',
+    type: question.question_type || 'options',
+    options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
+  });
+  setEditingId(question._id);
+  
     
     // Set editing ID to the actual question document ID
     setEditingId(question._id);
@@ -264,13 +266,13 @@ const Admin = () => {
   const handleEdit = (question) => {
     console.log('Editing question:', question);
     
-    setNewQuestion({
-      title: newQuestion.title,
-      question: question.question_text || '',
-      type: question.question_type || 'options',
-      options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
-    });
-    setEditingId(question._id);
+     // Set form state with the question data
+  setNewQuestion({
+    title: newQuestion.title,  // <- This also keeps current title
+    question: question.question_text || '',
+    type: question.question_type || 'options',
+    options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
+  });
     
     console.log('Edit state set:', {
       editingId: question._id,
