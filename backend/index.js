@@ -6,7 +6,10 @@ const textToSpeech = require('@google-cloud/text-to-speech');
 const { v1 } = require('@google-cloud/text-to-speech');
 const { Translate } = require('@google-cloud/translate').v2;
 const connectMongo = require('./db_service/connection');
-
+const { adminRoutes } = require('./adminService');
+// ADD these imports:
+const Question = require('./models/Quetions'); 
+const Option = require('./models/Options');
  
 const app = express();
 const port = process.env.PORT || 3001;
@@ -21,9 +24,6 @@ if (!GEMINI_API_KEY) {
 }
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
- 
-const { adminRoutes, questions } = require('./adminService');
-// --- Google Cloud Text-to-Speech Setup ---
 const ttsClient = new textToSpeech.TextToSpeechClient({
   projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
   credentials: {
@@ -63,20 +63,64 @@ function safeParseGeminiJson(text) {
     }
 }
  
-// 1. Start a new session
-app.post('/api/start-session', (req, res) => {
-    const sessionId = generateSessionId();
-    sessions.set(sessionId, {
-        conversationHistory: [],
-        responses: {},
-        currentQuestionIndex: 0, // This is the 0-based index of the question *to be asked next*
-        lastPredictedOption: null, // Stores the predicted option from Gemini for VAGUE answer confirmation
-        lastQuestionOptions: [], // Store options for current question if clarification is needed
-        reviewMode: false // New state variable: true if in review, false otherwise
-    });
-    console.log(`New session started: ${sessionId}`);
-    res.json({ sessionId });
+// REPLACE the entire app.post('/api/start-session') with:
+app.post('/api/start-session', async (req, res) => {
+    const { language = 'en' } = req.body;
+    
+    try {
+        // Fetch questions from database
+        const questions = await Question.find({ 
+            language: language, 
+            is_approved: true,
+            status: 'approved'
+        }).sort({ created_at: 1 });
+
+        // Fetch options for each question
+        const questionsWithOptions = await Promise.all(questions.map(async (question) => {
+            const options = await Option.find({ 
+                question_id: question._id,
+                language: language,
+                is_approved: true,
+                status: 'approved'
+            }).sort({ sort_order: 1 });
+
+            return {
+                id: question._id.toString(),
+                question: question.question_text,
+                type: question.question_type,
+                options: options.map(opt => opt.option_text),
+                language: question.language,
+                qid: question.qid
+            };
+        }));
+
+        if (questionsWithOptions.length === 0) {
+            return res.status(400).json({ 
+                error: `No approved questions found for language: ${language}` 
+            });
+        }
+
+        const sessionId = generateSessionId();
+        sessions.set(sessionId, {
+            conversationHistory: [],
+            responses: {},
+            currentQuestionIndex: 0,
+            lastPredictedOption: null,
+            lastQuestionOptions: [],
+            reviewMode: false,
+            language: language,
+            questions: questionsWithOptions // Store questions in session
+        });
+        
+        console.log(`New session started: ${sessionId} (Language: ${language}, Questions: ${questionsWithOptions.length})`);
+        res.json({ sessionId, language, totalQuestions: questionsWithOptions.length });
+    } catch (error) {
+        console.error('Error starting session:', error);
+        res.status(500).json({ error: 'Failed to start session' });
+    }
 });
+
+
  
 app.post('/api/chat', async (req, res) => {
     // Add questionIdToReAnswer to destructuring
@@ -93,6 +137,16 @@ app.post('/api/chat', async (req, res) => {
     if (!session) {
         console.error("Backend: Session not found for ID:", sessionId);
         return res.status(404).json({ assistantMessage: "Session not found. Please start a new session.", action: "error" });
+    }
+
+    const questions = session.questions || [];
+
+    if (questions.length === 0) {
+        console.error("Backend: No questions available for session:", sessionId);
+        return res.status(400).json({ 
+            assistantMessage: "No questions available for this session.", 
+            action: "error" 
+        });
     }
  
     let conversationHistory = session.conversationHistory;
@@ -217,10 +271,10 @@ app.post('/api/chat', async (req, res) => {
                     actionToFrontend = 'ask_question';
                     currentQuestionIndex = 0;
                     if (firstQuestion.type === 'freetext') {
-                        assistantMessage = `${assistantMessage} Question ${parseInt(firstQuestion.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
-                    } else {
-                        assistantMessage = `${assistantMessage} Question ${parseInt(firstQuestion.id) + 1}: ${nextQuestionText}. The options are: ${firstQuestion.options.join(', ')}.`;
-                    }
+                            assistantMessage = `${assistantMessage} Question 1: ${nextQuestionText}. Please provide your answer in your own words.`;
+                        } else {
+                            assistantMessage = `${assistantMessage} Question 1: ${nextQuestionText}. The options are: ${firstQuestion.options.join(', ')}.`;
+                        }
                     session.lastQuestionOptions = firstQuestion.options;
                     session.currentQuestionIndex = currentQuestionIndex;
                 } else {
@@ -251,7 +305,7 @@ app.post('/api/chat', async (req, res) => {
                 answerPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
                 The current question being answered is: "${currentQuestionObj.question}".
                 This is a FREE TEXT question - the user can provide any response in their own words.
-                There are a total of ${questions.length} questions. The current question is question number ${parseInt(currentQuestionObj.id) + 1}.`;
+                There are a total of ${questions.length} questions. The current question is question number ${actualQuestionIndex + 1}.`;
             } else {
                 answerPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
                 The current question being answered is: "${currentQuestionObj.question}".
@@ -349,10 +403,11 @@ app.post('/api/chat', async (req, res) => {
                     nextQuestionText = nextQ.question;
                     questionIdToFrontend = nextQ.id;
                     session.lastQuestionOptions = nextQ.options || [];
+                    const nextQuestionNumber = nextIndex + 1;
                     if (nextQ.type === 'freetext') {
-                        assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
+                        assistantMessage = `${geminiAssistantMessage} Question ${nextQuestionNumber}: ${nextQuestionText}. Please provide your answer in your own words.`;
                     } else {
-                        assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. The options are: ${nextQ.options.join(', ')}.`;
+                        assistantMessage = `${geminiAssistantMessage} Question ${nextQuestionNumber}: ${nextQuestionText}. The options are: ${nextQ.options.join(', ')}.`;
                     }
                 } else {
                     // All questions answered, transition to 'complete'
@@ -382,14 +437,11 @@ app.post('/api/chat', async (req, res) => {
                 session.currentQuestionIndex = actualQuestionIndex; // Update session
                 session.lastQuestionOptions = currentQuestionObj.options;
                 nextQuestionText = currentQuestionObj.question; // Repeat the question text for re_ask/clarify
-                if (actionToFrontend === 'repeat_question_gemini_detected') {
-                    if (currentQuestionObj.type === 'freetext') {
-                        assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
-                    } else {
-                        assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. The options are: ${currentQuestionObj.options.join(', ')}.`;
-                    }
+                const questionNumber = actualQuestionIndex + 1;
+                if (currentQuestionObj.type === 'freetext') {
+                    assistantMessage = `${geminiAssistantMessage} Question ${questionNumber}: ${nextQuestionText}. Please provide your answer in your own words.`;
                 } else {
-                    assistantMessage = geminiAssistantMessage; // Gemini provides the full message
+                    assistantMessage = `${geminiAssistantMessage} Question ${questionNumber}: ${nextQuestionText}. The options are: ${currentQuestionObj.options.join(', ')}.`;
                 }
             }
  
@@ -420,7 +472,7 @@ app.post('/api/chat', async (req, res) => {
                     The user's latest response for confirmation is "${userMessage}".
                     Determine if the user's response ("${userMessage}") indicates confirmation (e.g., "yes", "correct", "that's right") or denial (e.g., "no", "incorrect", "try again", "rephrase").
                     If denial, also try to infer if they are providing a *different* valid option from: ${currentQuestionObj.options.join(', ')}.
-                    There are a total of ${questions.length} questions. The current question is question number ${parseInt(currentQuestionObj.id) + 1}.
+                    There are a total of ${questions.length} questions. The current question is question number ${actualQuestionIndex + 1}.
  
                     If confirmed:
                     - Set "action" to "ask_question" if more questions, or "complete" if last question.
@@ -506,10 +558,11 @@ app.post('/api/chat', async (req, res) => {
                             nextQuestionText = nextQ.question;
                             questionIdToFrontend = nextQ.id;
                             session.lastQuestionOptions = nextQ.options || [];
+                            const nextQuestionNumber = nextIndex + 1;
                             if (nextQ.type === 'freetext') {
-                                assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
+                                assistantMessage = `${geminiAssistantMessage} Question ${nextQuestionNumber}: ${nextQuestionText}. Please provide your answer in your own words.`;
                             } else {
-                                assistantMessage = `${geminiAssistantMessage} Question ${parseInt(nextQ.id) + 1}: ${nextQuestionText}. The options are: ${nextQ.options.join(', ')}.`;
+                                assistantMessage = `${geminiAssistantMessage} Question ${nextQuestionNumber}: ${nextQuestionText}. The options are: ${nextQ.options.join(', ')}.`;
                             }
                         } else {
                             actionToFrontend = 'complete';
@@ -530,14 +583,11 @@ app.post('/api/chat', async (req, res) => {
                     session.lastQuestionOptions = currentQuestionObj.options;
                     // currentQuestionIndex and questionIdToFrontend are already set from confirmData/currentQuestionObj
                     nextQuestionText = currentQuestionObj.question; // Repeat the question text for re_ask/clarify
-                    if (actionToFrontend === 'repeat_question_gemini_detected') {
-                        if (currentQuestionObj.type === 'freetext') {
-                            assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. Please provide your answer in your own words.`;
-                        } else {
-                            assistantMessage = `${geminiAssistantMessage} Question ${parseInt(currentQuestionObj.id) + 1}: ${nextQuestionText}. The options are: ${currentQuestionObj.options.join(', ')}.`;
-                        }
+                    const questionNumber = actualQuestionIndex + 1;
+                    if (currentQuestionObj.type === 'freetext') {
+                        assistantMessage = `${geminiAssistantMessage} Question ${questionNumber}: ${nextQuestionText}. Please provide your answer in your own words.`;
                     } else {
-                        assistantMessage = geminiAssistantMessage; // Gemini provides the full message
+                        assistantMessage = `${geminiAssistantMessage} Question ${questionNumber}: ${nextQuestionText}. The options are: ${currentQuestionObj.options.join(', ')}.`;
                     }
                 }
             }
