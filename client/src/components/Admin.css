@@ -15,22 +15,22 @@
 }
 
 .admin-header h1 {
-  color: #333;
+  color: #1BA7E8;
   margin: 0;
 }
 
 .back-link {
-  color: #007bff;
+  color: #1BA7E8;
   text-decoration: none;
   font-weight: bold;
   padding: 8px 16px;
-  border: 1px solid #007bff;
+  border: 1px solid #1BA7E8;
   border-radius: 4px;
   transition: all 0.3s ease;
 }
 
 .back-link:hover {
-  background-color: #007bff;
+  background-color: #1BA7E8;
   color: white;
 }
 
@@ -49,7 +49,7 @@
 
 .question-form h2 {
   margin-top: 0;
-  color: #333;
+  color: #1BA7E8;
 }
 
 .form-group {
@@ -74,9 +74,19 @@
   box-sizing: border-box;
 }
 
+.form-group textarea:focus,
+.form-group input:focus,
+.form-group select:focus {
+  border-color: #1BA7E8;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(27, 167, 232, 0.2);
+}
+
 .type-select {
-  background: #6c757d;
+  background: #f8fdff;
+  border: 2px solid #1BA7E8;
   cursor: pointer;
+  color: #1BA7E8;
 }
 
 .freetext-info {
@@ -102,11 +112,13 @@
   display: flex;
   align-items: center;
   margin-bottom: 8px;
+  
 }
 
 .option-input input {
   flex: 1;
   margin-right: 10px;
+  /* background-color: white; */
 }
 
 .remove-option {
@@ -124,14 +136,25 @@
 }
 
 .add-option {
-  background: #28a745;
+  background: #1BA7E8;
   color: white;
   border: none;
-  padding: 8px 12px;
+  padding: 6px 10px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 14px;
-  margin-top: 8px;
+  font-size: 12px;
+  margin-left: 10px;
+}
+
+.options-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.options-header label {
+  margin-bottom: 0;
 }
 
 .form-actions {
@@ -141,7 +164,7 @@
 }
 
 .save-btn {
-  background: #007bff;
+  background: #1BA7E8;
   color: white;
   border: none;
   padding: 12px 20px;
@@ -175,7 +198,7 @@
 
 .questions-list h2 {
   margin-top: 0;
-  color: #333;
+  color: #1BA7E8;
 }
 
 .no-questions {
@@ -216,9 +239,10 @@
   flex: 1;
   border: 1px solid #ddd;
   border-radius: 6px;
-  padding: 8px;
+  padding: 12px;
   background: white;
-  min-height: 120px;
+  min-height: 140px;
+  min-width: 200px;
 }
 
 
@@ -243,8 +267,30 @@
 }
 
 .language-name {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 12px;
   font-weight: bold;
-  color: #333;
+  border: 1px solid;
+}
+
+.language-name.language-en {
+  background: #e8f4fd;
+  color: #1BA7E8;
+  border-color: #1BA7E8;
+}
+
+.language-name.language-es {
+  background: #fff8e1;
+  color: #f57c00;
+  border-color: #f57c00;
+}
+
+.language-name.language-hi {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border-color: #2e7d32;
 }
 
 .language-actions {
@@ -263,13 +309,22 @@
 }
 
 .edit-translation-btn {
-  background: #17a2b8;
-  color: white;
+  background: transparent;
+  color: #1BA7E8;
   border: none;
   padding: 4px 8px;
   border-radius: 3px;
   font-size: 11px;
   cursor: pointer;
+}
+
+.edit-btn:hover,
+.delete-btn:hover,
+.edit-translation-btn:hover,
+.approve-btn:hover,
+.remove-option:hover {
+  background-color: #1BA7E8 !important;
+  color: white !important;
 }
 
 .translation-content {
@@ -301,7 +356,7 @@
 }
 
 .question-id {
-  background: #007bff;
+  background: #1BA7E8;
   color: white;
   padding: 4px 8px;
   border-radius: 4px;
@@ -315,8 +370,8 @@
 }
 
 .edit-btn {
-  background: #ffc107;
-  color: #212529;
+  background: transparent;
+  color: #1BA7E8;
   border: none;
   padding: 6px 12px;
   border-radius: 4px;
@@ -327,7 +382,7 @@
 .delete-btn {
   background: transparent;
   color: #dc3545;
-  border: 1px solid #dc3545;
+  border: none;
   padding: 6px 12px;
   border-radius: 4px;
   cursor: pointer;
@@ -343,6 +398,9 @@
 
 .question-type {
   margin-bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .type-badge {
@@ -355,8 +413,9 @@
 }
 
 .type-badge.options {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: white;
+  color: #1BA7E8;
+  border: 1px solid #1BA7E8;
 }
 
 .type-badge.freetext {
@@ -378,6 +437,10 @@
   margin-bottom: 2px;
 }
 
+.question-options ul li::marker {
+  color: #1BA7E8;
+}
+
 @media (max-width: 768px) {
   .admin-content {
     grid-template-columns: 1fr;
@@ -394,14 +457,14 @@
 .language-detection {
   margin-bottom: 15px;
   padding: 8px 12px;
-  background: #e7f3ff;
-  border: 1px solid #b8daff;
+  background: #e8f7fd;
+  border: 1px solid #1BA7E8;
   border-radius: 4px;
 }
 
 .detected-lang {
   font-size: 14px;
-  color: #004085;
+  color: #1BA7E8;
 }
 
 .language-detection small {
@@ -418,13 +481,13 @@
 }
 
 .language-version.detected-lang {
-  border: 2px solid #007bff;
-  background-color: #f8f9ff;
+  border: 2px solid #1BA7E8;
+  background-color: #f0f9ff;
 }
 
 .detected-indicator {
   font-size: 12px;
-  color: #007bff;
+  color: #1BA7E8;
   font-weight: normal;
   font-style: italic;
 }

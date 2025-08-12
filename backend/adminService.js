@@ -12,7 +12,7 @@ const translateClient = new Translate({
 });
 
 // Supported languages
-const SUPPORTED_LANGUAGES = ['en', 'es', 'hi', 'fr'];
+const SUPPORTED_LANGUAGES = ['en', 'es', 'hi'];
 
 // Function to detect language of the input text
 const detectLanguage = async (text) => {

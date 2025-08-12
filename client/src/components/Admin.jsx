@@ -7,8 +7,8 @@ const API_BASE_URL = 'http://localhost:3001/api';
 const LANGUAGES = {
   en: 'English',
   es: 'Spanish', 
-  hi: 'Hindi',
-  fr: 'French'
+  hi: 'Hindi'
+  // fr: 'French'
 };
 
 // Function to detect language of text (simple detection based on character sets)
@@ -410,7 +410,12 @@ const Admin = () => {
 
             {newQuestion.type === 'options' && (
               <div className="form-group">
-                <label>Options:</label>
+                <div className="options-header">
+                  <label>Options:</label>
+                  <button type="button" onClick={addOption} className="add-option">
+                    + Add Option
+                  </button>
+                </div>
                 {newQuestion.options.map((option, index) => (
                   <div key={index} className="option-input">
                     <input
@@ -419,6 +424,7 @@ const Admin = () => {
                       onChange={(e) => handleOptionChange(index, e.target.value)}
                       placeholder={`Option ${index + 1}`}
                       required
+                      style={{ color: '#333', backgroundColor: '#f9f9f9' }}
                     />
                     {newQuestion.options.length > 2 && (
                       <button
@@ -426,14 +432,11 @@ const Admin = () => {
                         onClick={() => removeOption(index)}
                         className="remove-option"
                       >
-                        <i className="fas fa-trash"></i>
+                        <i className="fas fa-times"></i>
                       </button>
                     )}
                   </div>
                 ))}
-                <button type="button" onClick={addOption} className="add-option">
-                  + Add Option
-                </button>
               </div>
             )}
 
@@ -473,11 +476,11 @@ const Admin = () => {
 
         <div className="questions-list">
           <h2>Existing Questions ({questionsForDisplay.length})</h2>
-          {newQuestion.question && (
+          {/* {newQuestion.question && (
             <p className="filter-info">
               Showing all questions - current input language ({LANGUAGES[detectedLanguage]}) is highlighted
             </p>
-          )}
+          )} */}
           
           {questionsForDisplay.length === 0 ? (
             <p className="no-questions">No questions found. Add your first question above.</p>
@@ -491,14 +494,6 @@ const Admin = () => {
                   <div key={questionGroup.qid} className="question-card-multi">
                     <div className="question-header">
                       <span className="question-id">Q{index + 1}</span>
-                      <div className="question-actions">
-                        <button onClick={() => handleEdit(firstQuestion)} className="edit-btn">
-                          Edit
-                        </button>
-                        <button onClick={() => handleDelete(firstQuestion)} className="delete-btn">
-                          <i className="fas fa-trash"></i> Delete All
-                        </button>
-                      </div>
                     </div>
                     
                     <div className="languages-container">
@@ -509,9 +504,8 @@ const Admin = () => {
                         return (
                           <div key={langCode} className={`language-version ${isApproved ? 'approved' : 'pending'} ${isDetectedLanguage ? 'detected-lang' : ''}`}>
                             <div className="language-header">
-                              <span className="language-name">
+                              <span className={`language-name language-${langCode}`}>
                                 {LANGUAGES[langCode]}
-                                {isDetectedLanguage && <span className="detected-indicator"> (Input Language)</span>}
                               </span>
                               <div className="language-actions">
                                 {!isApproved && (
@@ -519,14 +513,14 @@ const Admin = () => {
                                     onClick={() => handleApprove(question._id || question.id)}
                                     className="approve-btn"
                                   >
-                                    Approve
+                                    <i className="fas fa-check"></i> Approve
                                   </button>
                                 )}
                                 <button 
                                   onClick={() => handleEditTranslation(question, langCode)}
                                   className="edit-translation-btn"
                                 >
-                                  Edit
+                                  <i className="fas fa-edit"></i>
                                 </button>
                               </div>
                             </div>
@@ -556,6 +550,14 @@ const Admin = () => {
                       <span className={`type-badge ${firstQuestion.question_type || 'options'}`}>
                         {firstQuestion.question_type === 'freetext' ? 'Free Text' : 'Multiple Choice'}
                       </span>
+                      <div className="question-actions">
+                        <button onClick={() => handleEdit(firstQuestion)} className="edit-btn">
+                          <i className="fas fa-edit"></i>
+                        </button>
+                        <button onClick={() => handleDelete(firstQuestion)} className="delete-btn">
+                          <i className="fas fa-trash"></i>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
