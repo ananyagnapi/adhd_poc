@@ -157,18 +157,18 @@ const adminRoutes = (app) => {
             questionnaire_id: qid,
             questionnaire_title: title.trim(), 
             questions: createdQuestions.map(q => ({
-    _id: q._id,
-    question_text: q.question_text,
-    language: q.language,
-    question_type: q.question_type,
-    is_approved: q.is_approved,
-    created_at: q.created_at,
-    created_by: q.created_by,
-    updated_by: q.updated_by,
-    status: q.status,
-    qid: q.qid,
-    title: q.title  // <- This uses the title from the saved document
-})),
+            _id: q._id,
+            question_text: q.question_text,
+            language: q.language,
+            question_type: q.question_type,
+            is_approved: q.is_approved,
+            created_at: q.created_at,
+            created_by: q.created_by,
+            updated_by: q.updated_by,
+            status: q.status,
+            qid: q.qid,
+            title: q.title
+        })),
             total_questions_created: createdQuestions.length,
             languages_created: SUPPORTED_LANGUAGES
         };
