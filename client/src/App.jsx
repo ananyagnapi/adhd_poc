@@ -492,6 +492,7 @@ function Questionnaire() {
       });
       if (!response.ok) throw new Error('Failed to start session');
       const data = await response.json();
+      console.log("DynamicsCompressorNode",data)
       const newSessionId = data.sessionId;
       setSessionId(newSessionId);
       console.log("Session started with ID:", newSessionId);

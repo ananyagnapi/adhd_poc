@@ -63,20 +63,17 @@ function safeParseGeminiJson(text) {
     }
 }
  
-// REPLACE the entire app.post('/api/start-session') with:
 app.post('/api/start-session', async (req, res) => {
     const { language = 'en' } = req.body;
     
     try {
-        // Fetch questions from database
         const questions = await Question.find({ 
             language: language, 
-            is_approved: true,
-            status: 'approved'
+            is_approved: true,        // Only approved questions
+            status: 'approved'        // Double check with status field
         }).sort({ created_at: 1 });
-
-        // Fetch options for each question
-        const questionsWithOptions = await Promise.all(questions.map(async (question) => {
+    
+         const questionsWithOptions = await Promise.all(questions.map(async (question) => {
             const options = await Option.find({ 
                 question_id: question._id,
                 language: language,
@@ -94,9 +91,17 @@ app.post('/api/start-session', async (req, res) => {
             };
         }));
 
-        if (questionsWithOptions.length === 0) {
+        // NEW: Filter out questions that don't have any approved options (for non-freetext questions)
+        const validQuestions = questionsWithOptions.filter(q => {
+            if (q.type === 'freetext') {
+                return true; // Freetext questions don't need options
+            }
+            return q.options && q.options.length > 0; // Other types need at least one approved option
+        });
+
+        if (validQuestions.length === 0) {
             return res.status(400).json({ 
-                error: `No approved questions found for language: ${language}` 
+                error: `No approved questions with valid options found for language: ${language}` 
             });
         }
 
@@ -109,18 +114,40 @@ app.post('/api/start-session', async (req, res) => {
             lastQuestionOptions: [],
             reviewMode: false,
             language: language,
-            questions: questionsWithOptions // Store questions in session
+            questions: questionsWithOptions // Store only valid approved questions in session
         });
         
-        console.log(`New session started: ${sessionId} (Language: ${language}, Questions: ${questionsWithOptions.length})`);
-        res.json({ sessionId, language, totalQuestions: questionsWithOptions.length });
+        console.log(`New session started: ${sessionId} (Language: ${language}, Valid Questions: ${validQuestions.length})`);
+        res.json({ sessionId, language, totalQuestions: validQuestions.length });
     } catch (error) {
         console.error('Error starting session:', error);
         res.status(500).json({ error: 'Failed to start session' });
     }
 });
 
-
+async function validateQuestionApproval(questionId) {
+    try {
+        const question = await Question.findById(questionId);
+        if (!question || !question.is_approved || question.status !== 'approved') {
+            return false;
+        }
+        
+        // For non-freetext questions, also check if options are approved
+        if (question.question_type !== 'freetext') {
+            const approvedOptions = await Option.find({
+                question_id: questionId,
+                is_approved: true,
+                status: 'approved'
+            });
+            return approvedOptions.length > 0;
+        }
+        
+        return true;
+    } catch (error) {
+        console.error('Error validating question approval:', error);
+        return false;
+    }
+}
  
 app.post('/api/chat', async (req, res) => {
     // Add questionIdToReAnswer to destructuring
@@ -290,7 +317,62 @@ app.post('/api/chat', async (req, res) => {
  
         // THIS IS THE MODIFIED BLOCK FOR 'answer' AND 're_answer_specific_question'
         } else if (action === 'answer' || action === 're_answer_specific_question') {
-            // currentQuestionObj and actualQuestionIndex are already determined above
+            if (currentQuestionObj) {
+                const isApproved = await validateQuestionApproval(currentQuestionObj.id);
+                if (!isApproved) {
+                    console.warn(`Question ${currentQuestionObj.id} is no longer approved. Removing from session.`);
+                    
+                    // Remove this question from session
+                    const updatedQuestions = questions.filter(q => q.id !== currentQuestionObj.id);
+                    session.questions = updatedQuestions;
+                    
+                    // Find next valid question
+                    let nextValidIndex = actualQuestionIndex;
+                    while (nextValidIndex < updatedQuestions.length) {
+                        const isNextValid = await validateQuestionApproval(updatedQuestions[nextValidIndex].id);
+                        if (isNextValid) break;
+                        nextValidIndex++;
+                    }
+                    
+                    if (nextValidIndex < updatedQuestions.length) {
+                        // Move to next valid question
+                        const nextQ = updatedQuestions[nextValidIndex];
+                        session.currentQuestionIndex = nextValidIndex;
+                        assistantMessage = `I'm sorry, there was an issue with the previous question. Let's continue with the next one. Question ${nextValidIndex + 1}: ${nextQ.question}. ${nextQ.type === 'freetext' ? 'Please provide your answer in your own words.' : `The options are: ${nextQ.options.join(', ')}.`}`;
+                        actionToFrontend = 'ask_question';
+                        questionIdToFrontend = nextQ.id;
+                        nextQuestionText = nextQ.question;
+                        session.lastQuestionOptions = nextQ.options || [];
+                        
+                        return res.json({
+                            assistantMessage,
+                            action: actionToFrontend,
+                            questionId: questionIdToFrontend,
+                            currentQuestionIndex: session.currentQuestionIndex,
+                            nextQuestion: nextQuestionText,
+                            predictedOption: null,
+                            responses: userResponses,
+                        });
+                    } else {
+                        // No more valid questions, complete the questionnaire
+                        assistantMessage = "Thank you.Let's complete the questionnaire with your current responses.";
+                        actionToFrontend = 'complete';
+                        questionIdToFrontend = null;
+                        nextQuestionText = null;
+                        session.currentQuestionIndex = updatedQuestions.length;
+                        
+                        return res.json({
+                            assistantMessage,
+                            action: actionToFrontend,
+                            questionId: questionIdToFrontend,
+                            currentQuestionIndex: session.currentQuestionIndex,
+                            nextQuestion: nextQuestionText,
+                            predictedOption: null,
+                            responses: userResponses,
+                        });
+                    }
+                }
+            }
             if (!currentQuestionObj) {
                 console.warn("Backend: No currentQuestionObj found for 'answer' or 're_answer_specific_question' action.");
                 assistantMessage = "I'm sorry, I couldn't find the context for that question. Can we restart?";
