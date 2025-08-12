@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSelector, useDispatch } from 'react-redux';
 import './Admin.css';
 
 const API_BASE_URL = 'http://localhost:3001/api';
@@ -6,20 +7,75 @@ const API_BASE_URL = 'http://localhost:3001/api';
 const LANGUAGES = {
   en: 'English',
   es: 'Spanish', 
-  hi: 'Hindi'
+  hi: 'Hindi',
+  fr: 'French'
+};
+
+// Function to detect language of text (simple detection based on character sets)
+const detectLanguageSimple = (text) => {
+  if (!text) return 'en';
+  
+  // Check for Hindi characters
+  if (/[\u0900-\u097F]/.test(text)) return 'hi';
+  
+  // Check for common Spanish words/patterns
+  if (/[ñáéíóúü¿¡]/i.test(text)) return 'es';
+  
+  // Check for French characters
+  if (/[àâäçéèêëïîôùûüÿ]/i.test(text)) return 'fr';
+  
+  // Default to English
+  return 'en';
 };
 
 const Admin = () => {
-  const [questions, setQuestions] = useState([]);
   const [newQuestion, setNewQuestion] = useState({
+    title: 'Default Questionnaire',
     question: '',
     type: 'options',
     options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
   });
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [detectedLanguage, setDetectedLanguage] = useState('en');
+
+  // Get questions from Redux store
+  const allQuestions = useSelector((state) => state.quetion.quetionData) || [];
+  const dispatch = useDispatch();
+
+  // Detect language when question text changes
+  useEffect(() => {
+    const detected = detectLanguageSimple(newQuestion.question);
+    setDetectedLanguage(detected);
+  }, [newQuestion.question]);
+
+  // Get unique questionnaire groups and their questions by language
+  const getQuestionsForDisplay = () => {
+    const questionsByQid = {};
+    
+    // Group all questions by qid first
+    allQuestions.forEach(question => {
+      const qid = question.qid;
+      if (!questionsByQid[qid]) {
+        questionsByQid[qid] = {};
+      }
+      questionsByQid[qid][question.language] = question;
+    });
+
+    // Convert to array - show all languages but highlight detected language differently
+    return Object.entries(questionsByQid).map(([qid, languageQuestions]) => {
+      return {
+        qid,
+        languageQuestions,
+        detectedLanguage
+      };
+    }).filter(item => Object.keys(item.languageQuestions).length > 0);
+  };
+
+  const questionsForDisplay = getQuestionsForDisplay();
 
   useEffect(() => {
+    // Fetch questions when component mounts
     fetchQuestions();
   }, []);
 
@@ -27,7 +83,12 @@ const Admin = () => {
     try {
       const response = await fetch(`${API_BASE_URL}/admin/questions`);
       const data = await response.json();
-      setQuestions(data);
+      
+      // Dispatch action to update Redux store
+      dispatch({ 
+        type: 'quetionData/addAllQuetions', 
+        payload: data 
+      });
     } catch (error) {
       console.error('Error fetching questions:', error);
     }
@@ -38,40 +99,139 @@ const Admin = () => {
     setLoading(true);
 
     try {
-      const url = editingId 
-        ? `${API_BASE_URL}/admin/questions/${editingId}`
-        : `${API_BASE_URL}/admin/questions`;
+      let url, method, requestBody;
       
-      const method = editingId ? 'PUT' : 'POST';
+      if (editingId) {
+        // HANDLE UPDATE: Find the question being edited to get its details
+        const currentQuestion = allQuestions.find(q => q._id === editingId);
+        
+        if (!currentQuestion) {
+          alert('Question not found');
+          setLoading(false);
+          return;
+        }
+
+        // Ask user if they want to update all language versions
+        const shouldRetranslate = confirm(
+          'Do you want to update all language versions of this question with new translations?\n\n' +
+          'Click "OK" to update all languages (recommended)\n' +
+          'Click "Cancel" to abort the update'
+        );
+
+        if (!shouldRetranslate) {
+          // User clicked Cancel - abort the update
+          console.log('Update cancelled by user');
+          setLoading(false);
+          return;
+        }
+
+        // User clicked OK - proceed with updating all language versions
+        url = `${API_BASE_URL}/admin/questions/${editingId}`;
+        method = 'PUT';
+        
+        requestBody = {
+          question_text: newQuestion.question || '',
+          question_type: newQuestion.type || 'options',
+          options: newQuestion.type === 'options' ? (newQuestion.options || []) : [],
+          retranslate: true // Flag to trigger retranslation
+        };
+
+        console.log('UPDATE with retranslation:', {
+          id: editingId,
+          currentLanguage: currentQuestion.language,
+          qid: currentQuestion.qid,
+          url: url,
+          method: method,
+          body: requestBody
+        });
+
+        // Ensure question_text is not empty
+        if (!requestBody.question_text.trim()) {
+          alert('Question text cannot be empty');
+          setLoading(false);
+          return;
+        }
+
+      } else {
+        // HANDLE CREATE: New question creation
+        url = `${API_BASE_URL}/admin/questions`;
+        method = 'POST';
+        
+        requestBody = {
+          title: newQuestion.title || 'Default Questionnaire',
+          question: newQuestion.question || '',
+          type: newQuestion.type || 'options',
+          options: newQuestion.type === 'options' ? (newQuestion.options || []) : []
+        };
+
+        // Ensure question is not empty
+        if (!requestBody.question.trim()) {
+          alert('Question text cannot be empty');
+          setLoading(false);
+          return;
+        }
+
+        console.log('CREATE Request:', {
+          url: url,
+          method: method,
+          body: requestBody
+        });
+      }
       
       const response = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...newQuestion, language: 'en' })
+        method: method,
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
       });
 
+      const responseData = await response.json();
+
       if (response.ok) {
+        console.log('Success:', responseData);
+        
+        // Refresh questions to show all updates
         await fetchQuestions();
+        
+        // Reset form
         setNewQuestion({
+          title: 'Default Questionnaire',
           question: '',
           type: 'options',
           options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
         });
         setEditingId(null);
+        
+        const successMessage = editingId 
+          ? 'Question updated and retranslated to all languages!'
+          : 'Question created and translated to all languages!';
+        
+        alert(successMessage);
+      } else {
+        console.error('Server Error:', {
+          status: response.status,
+          statusText: response.statusText,
+          responseData: responseData,
+          sentData: requestBody
+        });
+        
+        alert(`Error: ${responseData.error || 'Server error occurred'}`);
       }
     } catch (error) {
-      console.error('Error saving question:', error);
+      console.error('Network Error:', error);
+      alert(`Network error: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleApprove = async (questionId, language) => {
+  const handleApprove = async (questionId) => {
     try {
       await fetch(`${API_BASE_URL}/admin/questions/${questionId}/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language })
+        headers: { 'Content-Type': 'application/json' }
       });
       await fetchQuestions();
     } catch (error) {
@@ -80,37 +240,93 @@ const Admin = () => {
   };
 
   const handleEditTranslation = (question, language) => {
-    const translation = question.translations?.[language] || question;
+    console.log('Editing question:', question);
+    
+    // Set form state with the question data
     setNewQuestion({
-      question: translation.question,
-      type: question.type,
-      options: translation.options || []
+      title: newQuestion.title,
+      question: question.question_text || '',
+      type: question.question_type || 'options',
+      options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
     });
-    setEditingId(`${question.id}_${language}`);
+    
+    // Set editing ID to the actual question document ID
+    setEditingId(question._id);
+    
+    console.log('Edit state set:', {
+      editingId: question._id,
+      questionText: question.question_text,
+      questionType: question.question_type,
+      options: question.options
+    });
   };
 
   const handleEdit = (question) => {
+    console.log('Editing question:', question);
+    
     setNewQuestion({
-      question: question.question,
-      type: question.type || 'options',
-      options: question.options ? [...question.options] : ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
+      title: newQuestion.title,
+      question: question.question_text || '',
+      type: question.question_type || 'options',
+      options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
     });
-    setEditingId(question.id);
+    setEditingId(question._id);
+    
+    console.log('Edit state set:', {
+      editingId: question._id,
+      questionText: question.question_text,
+      questionType: question.question_type,
+      options: question.options
+    });
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Are you sure you want to delete this question?')) return;
+  const handleDelete = async (question) => {
+    if (!confirm('Are you sure you want to delete this question in ALL languages? This action cannot be undone.')) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/admin/questions/${id}`, {
-        method: 'DELETE'
-      });
+      // Get all questions with the same qid (questionnaire ID)
+      const questionsToDelete = allQuestions.filter(q => q.qid === question.qid);
+      
+      console.log(`Deleting ${questionsToDelete.length} questions with qid: ${question.qid}`);
+      
+      // Delete each question individually using existing endpoint
+      const deletePromises = questionsToDelete.map(q => 
+        fetch(`${API_BASE_URL}/admin/questions/${q._id}`, {
+          method: 'DELETE'
+        })
+      );
 
-      if (response.ok) {
+      const responses = await Promise.all(deletePromises);
+      
+      // Check responses
+      let successCount = 0;
+      let failCount = 0;
+      
+      for (let i = 0; i < responses.length; i++) {
+        if (responses[i].ok) {
+          successCount++;
+        } else {
+          failCount++;
+          console.error(`Failed to delete question ${questionsToDelete[i]._id}:`, responses[i].status);
+        }
+      }
+      
+      console.log(`Successfully deleted ${successCount} questions, ${failCount} failed`);
+      
+      if (successCount > 0) {
         await fetchQuestions();
+        
+        if (failCount === 0) {
+          console.log(`Successfully deleted all ${successCount} questions in all languages`);
+        } else {
+          alert(`Deleted ${successCount} questions successfully, but ${failCount} failed. Please refresh and try again for any remaining questions.`);
+        }
+      } else {
+        alert('Failed to delete any questions. Please try again.');
       }
     } catch (error) {
-      console.error('Error deleting question:', error);
+      console.error('Error deleting questions:', error);
+      alert('Error deleting questions. Please try again.');
     }
   };
 
@@ -142,17 +358,42 @@ const Admin = () => {
       <div className="admin-content">
         <div className="question-form">
           <h2>{editingId ? 'Edit Question' : 'Add New Question'}</h2>
+          
+          {newQuestion.question && (
+            <div className="language-detection">
+              <span className="detected-lang">
+                Language: <strong>{LANGUAGES[detectedLanguage]}</strong>
+                {/* <small> - This language will be highlighted in the results below</small> */}
+              </span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit}>
+            <div className="form-group">
+              <label>Questionnaire Title:</label>
+              <input
+                type="text"
+                value={newQuestion.title}
+                onChange={(e) => setNewQuestion({ ...newQuestion, title: e.target.value })}
+                placeholder="Enter questionnaire title..."
+                required
+              />
+            </div>
+
             <div className="form-group">
               <label>Question:</label>
               <textarea
                 value={newQuestion.question}
                 onChange={(e) => setNewQuestion({ ...newQuestion, question: e.target.value })}
-                placeholder="Enter your question here..."
+                placeholder="Enter your question here (in any language)..."
                 required
                 rows={3}
               />
+              {editingId && (
+                <small style={{color: '#666', fontSize: '12px'}}>
+                  Editing ID: {editingId} | Current text length: {newQuestion.question?.length || 0}
+                </small>
+              )}
             </div>
 
             <div className="form-group">
@@ -200,13 +441,14 @@ const Admin = () => {
               <div className="form-group">
                 <div className="freetext-info">
                   <p><strong>Free Text Question:</strong> Users will be able to provide open-ended responses to this question.</p>
+                  <p><em>Note: System will auto-translate to other languages.</em></p>
                 </div>
               </div>
             )}
 
             <div className="form-actions">
               <button type="submit" disabled={loading} className="save-btn">
-                {loading ? 'Saving...' : (editingId ? 'Update Question' : 'Add Question')}
+                {loading ? 'Saving & Translating...' : (editingId ? 'Update Question' : 'Add Question')}
               </button>
               {editingId && (
                 <button
@@ -214,6 +456,7 @@ const Admin = () => {
                   onClick={() => {
                     setEditingId(null);
                     setNewQuestion({
+                      title: 'Default Questionnaire',
                       question: '',
                       type: 'options',
                       options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
@@ -229,80 +472,94 @@ const Admin = () => {
         </div>
 
         <div className="questions-list">
-          <h2>Existing Questions ({questions.length})</h2>
-          {questions.length === 0 ? (
+          <h2>Existing Questions ({questionsForDisplay.length})</h2>
+          {newQuestion.question && (
+            <p className="filter-info">
+              Showing all questions - current input language ({LANGUAGES[detectedLanguage]}) is highlighted
+            </p>
+          )}
+          
+          {questionsForDisplay.length === 0 ? (
             <p className="no-questions">No questions found. Add your first question above.</p>
           ) : (
             <div className="questions-grid">
-              {questions.map((question) => (
-                <div key={question.id} className="question-card-multi">
-                  <div className="question-header">
-                    <span className="question-id">Q{parseInt(question.id) + 1}</span>
-                    <div className="question-actions">
-                      <button onClick={() => handleEdit(question)} className="edit-btn">
-                        Edit
-                      </button>
-                      <button onClick={() => handleDelete(question.id)} className="delete-btn">
-                        <i className="fas fa-trash"></i> Delete All
-                      </button>
+              {questionsForDisplay.map((questionGroup, index) => {
+                const languageQuestions = Object.values(questionGroup.languageQuestions);
+                const firstQuestion = languageQuestions[0]; // Use first question for main info
+                
+                return (
+                  <div key={questionGroup.qid} className="question-card-multi">
+                    <div className="question-header">
+                      <span className="question-id">Q{index + 1}</span>
+                      <div className="question-actions">
+                        <button onClick={() => handleEdit(firstQuestion)} className="edit-btn">
+                          Edit
+                        </button>
+                        <button onClick={() => handleDelete(firstQuestion)} className="delete-btn">
+                          <i className="fas fa-trash"></i> Delete All
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  
-                  <div className="languages-container">
-                    {Object.entries(LANGUAGES).map(([langCode, langName]) => {
-                      const translation = langCode === 'en' ? question : question.translations?.[langCode];
-                      const isApproved = translation?.approved || langCode === 'en';
-                      
-                      return (
-                        <div key={langCode} className={`language-version ${isApproved ? 'approved' : 'pending'}`}>
-                          <div className="language-header">
-                            <span className="language-name">{langName}</span>
-                            <div className="language-actions">
-                              {!isApproved && (
+                    
+                    <div className="languages-container">
+                      {Object.entries(questionGroup.languageQuestions).map(([langCode, question]) => {
+                        const isApproved = question.is_approved;
+                        const isDetectedLanguage = langCode === detectedLanguage;
+                        
+                        return (
+                          <div key={langCode} className={`language-version ${isApproved ? 'approved' : 'pending'} ${isDetectedLanguage ? 'detected-lang' : ''}`}>
+                            <div className="language-header">
+                              <span className="language-name">
+                                {LANGUAGES[langCode]}
+                                {isDetectedLanguage && <span className="detected-indicator"> (Input Language)</span>}
+                              </span>
+                              <div className="language-actions">
+                                {!isApproved && (
+                                  <button 
+                                    onClick={() => handleApprove(question._id || question.id)}
+                                    className="approve-btn"
+                                  >
+                                    Approve
+                                  </button>
+                                )}
                                 <button 
-                                  onClick={() => handleApprove(question.id, langCode)}
-                                  className="approve-btn"
+                                  onClick={() => handleEditTranslation(question, langCode)}
+                                  className="edit-translation-btn"
                                 >
-                                  Approve
+                                  Edit
                                 </button>
-                              )}
-                              <button 
-                                onClick={() => handleEditTranslation(question, langCode)}
-                                className="edit-translation-btn"
-                              >
-                                Edit
-                              </button>
-                            </div>
-                          </div>
-                          
-                          <div className="translation-content">
-                            <div className="question-text">
-                              {translation?.question || 'Translation pending...'}
+                              </div>
                             </div>
                             
-                            {question.type !== 'freetext' && translation?.options && (
-                              <div className="question-options">
-                                <strong>Options:</strong>
-                                <ul>
-                                  {translation.options.map((option, index) => (
-                                    <li key={index}>{option}</li>
-                                  ))}
-                                </ul>
+                            <div className="translation-content">
+                              <div className="question-text">
+                                {question.question_text || 'Translation pending...'}
                               </div>
-                            )}
+                              
+                              {question.question_type !== 'freetext' && question.options && question.options.length > 0 && (
+                                <div className="question-options">
+                                  <strong>Options:</strong>
+                                  <ul>
+                                    {question.options.map((option, optionIndex) => (
+                                      <li key={optionIndex}>{option}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
+                    
+                    <div className="question-type">
+                      <span className={`type-badge ${firstQuestion.question_type || 'options'}`}>
+                        {firstQuestion.question_type === 'freetext' ? 'Free Text' : 'Multiple Choice'}
+                      </span>
+                    </div>
                   </div>
-                  
-                  <div className="question-type">
-                    <span className={`type-badge ${question.type || 'options'}`}>
-                      {question.type === 'freetext' ? 'Free Text' : 'Multiple Choice'}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
