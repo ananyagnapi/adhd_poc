@@ -72,6 +72,7 @@ app.post('/api/start-session', async (req, res) => {
             is_approved: true,        // Only approved questions
             status: 'approved'        // Double check with status field
         }).sort({ created_at: 1 });
+        console.log("qws", Question)
     
          const questionsWithOptions = await Promise.all(questions.map(async (question) => {
             const options = await Option.find({ 
@@ -91,20 +92,40 @@ app.post('/api/start-session', async (req, res) => {
             };
         }));
 
-        // NEW: Filter out questions that don't have any approved options (for non-freetext questions)
-        const validQuestions = questionsWithOptions.filter(q => {
-            if (q.type === 'freetext') {
-                return true; // Freetext questions don't need options
-            }
-            return q.options && q.options.length > 0; // Other types need at least one approved option
-        });
+        // Get all qids that have any unapproved questions
+const unapprovedQids = await Question.distinct('qid', { is_approved: false });
+console.log('QIDs with unapproved questions:', unapprovedQids);
 
-        if (validQuestions.length === 0) {
-            return res.status(400).json({ 
-                error: `No approved questions with valid options found for language: ${language}` 
-            });
-        }
+// Filter out questions that don't have valid options OR have unapproved translations
+const validQuestions = questionsWithOptions.filter(q => {
+    // Check if this qid has any unapproved questions
+    const hasUnapprovedTranslations = unapprovedQids.some(unapprovedQid => 
+        unapprovedQid.toString() === q.qid.toString()
+    );
+    
+    if (hasUnapprovedTranslations) {
+        console.log(`Filtering out question with qid: ${q.qid} - has unapproved translations`);
+        return false;
+    }
+    
+    // Check for valid options (existing logic)
+    if (q.type === 'freetext') {
+        return true; // Freetext questions don't need options
+    }
+    
+    const hasValidOptions = q.options && q.options.length > 0;
+    if (!hasValidOptions) {
+        console.log(`Filtering out question with qid: ${q.qid} - no valid options`);
+    }
+    
+    return hasValidOptions;
+});
 
+if (validQuestions.length === 0) {
+    return res.status(400).json({ 
+        error: `No approved questions with valid options found for language: ${language}` 
+    });
+}
         const sessionId = generateSessionId();
         sessions.set(sessionId, {
             conversationHistory: [],
@@ -114,7 +135,7 @@ app.post('/api/start-session', async (req, res) => {
             lastQuestionOptions: [],
             reviewMode: false,
             language: language,
-            questions: questionsWithOptions // Store only valid approved questions in session
+            questions: validQuestions // Store only valid approved questions in session
         });
         
         console.log(`New session started: ${sessionId} (Language: ${language}, Valid Questions: ${validQuestions.length})`);
