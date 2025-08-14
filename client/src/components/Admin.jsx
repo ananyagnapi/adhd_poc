@@ -360,16 +360,7 @@ const Admin = () => {
       <div className="admin-content">
         <div className="question-form">
           <h2>{editingId ? 'Edit Question' : 'Add New Question'}</h2>
-          
-          {newQuestion.question && (
-            <div className="language-detection">
-              <span className="detected-lang">
-                Language: <strong>{LANGUAGES[detectedLanguage]}</strong>
-                {/* <small> - This language will be highlighted in the results below</small> */}
-              </span>
-            </div>
-          )}
-
+    
           <form onSubmit={handleSubmit}>
             <div className="form-group">
               <label>Questionnaire Title:</label>
@@ -379,6 +370,7 @@ const Admin = () => {
                 onChange={(e) => setNewQuestion({ ...newQuestion, title: e.target.value })}
                 placeholder="Enter questionnaire title..."
                 required
+                style={{ color: '#333', backgroundColor: '#f9f9f9' }}
               />
             </div>
 
@@ -390,6 +382,7 @@ const Admin = () => {
                 placeholder="Enter your question here (in any language)..."
                 required
                 rows={3}
+                  style={{ color: '#333', backgroundColor: '#f9f9f9' }}
               />
               {editingId && (
                 <small style={{color: '#666', fontSize: '12px'}}>

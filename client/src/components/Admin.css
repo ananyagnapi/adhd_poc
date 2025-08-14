@@ -293,6 +293,36 @@
   border-color: #2e7d32;
 }
 
+.language-version {
+  flex: 1;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 12px;
+  background: white;
+  min-height: 140px;
+  min-width: 200px;
+}
+
+/* Pending questions have red border */
+.language-version.pending {
+  border-color: #dc3545 !important;
+  background: #fff5f5;
+}
+
+/* Approved questions get language-specific colors */
+.language-version.approved:has(.language-es) {
+  border-color: #f57c00;
+  background-color: #fff8e1;
+}
+
+.language-version.approved:has(.language-hi) {
+  border-color: #2e7d32;
+}
+
+.language-version.approved:has(.language-en) {
+  border-color: #1BA7E8;
+}
+
 .language-actions {
   display: flex;
   gap: 5px;
@@ -401,26 +431,17 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-top: 1px solid #ddd;
+  padding-top: 15px;
+  margin-top: 15px;
 }
 
 .type-badge {
   display: inline-block;
-  padding: 4px 8px;
-  border-radius: 12px;
   font-size: 12px;
-  font-weight: bold;
+  font-weight: normal;
+  color: #666;
   text-transform: uppercase;
-}
-
-.type-badge.options {
-  background: white;
-  color: #1BA7E8;
-  border: 1px solid #1BA7E8;
-}
-
-.type-badge.freetext {
-  background: #f3e5f5;
-  color: #7b1fa2;
 }
 
 .question-options {
