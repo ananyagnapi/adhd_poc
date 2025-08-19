@@ -153,12 +153,12 @@ const adminRoutes = (app) => {
         let totalQuestionnaires = 0;
 
         for (const questionGroup of questionGroups) {
-            const questionnaireDoc = await Questionnaire.create({ form_id: formDoc._id });
+            const questionnaireDoc = await Questionnaire.create({ form_id: formDoc._id.toString() });
             totalQuestionnaires++;
 
             for (const questionData of questionGroup) {
                 const questionDoc = new Question({
-                    questionnaire_id: questionnaireDoc._id,
+                    questionnaire_id: questionnaireDoc._id.toString(),
                     question_text: questionData.question_text,
                     language: questionData.language,
                     question_type: questionData.question_type,
@@ -223,8 +223,8 @@ const adminRoutes = (app) => {
             formDoc = await Form.create({ title: title.trim() });
         }
 
-        const questionnaireDoc = await Questionnaire.create({ form_id: formDoc._id });
-        const qid = questionnaireDoc._id;
+        const questionnaireDoc = await Questionnaire.create({ form_id: formDoc._id.toString() });
+        const qid = questionnaireDoc._id.toString();
 
         const baseQuestionData = {
             question_type: type,

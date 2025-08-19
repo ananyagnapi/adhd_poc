@@ -135,15 +135,24 @@ function Questionnaire() {
   useEffect(() => {
     const questionData = async () => {
       try {
-        const response = await axios.get(`${API_BASE_URL}/admin/questions`);
+        // Fetch only approved questions for the questionnaire
+        const response = await axios.get(`${API_BASE_URL}/forms/approved-questions?language=${currentLanguage}`);
         dispatch(addAllQuetions(response.data))
-        console.log('response data:', response);
+        console.log('Approved questions loaded:', response.data);
       } catch (error) {
-        console.error('Error fetching questions:', error);
+        console.error('Error fetching approved questions:', error);
+        // Fallback to admin endpoint if needed
+        try {
+          const fallbackResponse = await axios.get(`${API_BASE_URL}/admin/questions`);
+          const approvedQuestions = fallbackResponse.data.filter(q => q.is_approved && q.status === 'approved');
+          dispatch(addAllQuetions(approvedQuestions));
+        } catch (fallbackError) {
+          console.error('Fallback also failed:', fallbackError);
+        }
       }
     };
     questionData();
-  }, []);
+  }, [currentLanguage, dispatch]);
 
 
   // --- Google TTS speakText function ---

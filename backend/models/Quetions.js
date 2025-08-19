@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const questionSchema = new mongoose.Schema({
-  questionnaire_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Questionnaire', required: true },
+  questionnaire_id: { type: String, required: true },
   question_text: { type: String, required: true },
   language: { type: String, required: true, enum: ['en', 'hi', 'es'] },
   question_type: { type: String, required: true },

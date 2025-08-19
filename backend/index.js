@@ -103,32 +103,38 @@ app.post('/api/start-session', async (req, res) => {
                 type: question.question_type,
                 options: options.map(opt => opt.option_text),
                 language: question.language,
-                qid: question.qid
+                qid: question.questionnaire_id
             };
         }));
 
-        // Get all questionnaire_ids that have any unapproved questions
-        const unapprovedQuestionnaireIds = await Question.distinct('questionnaire_id', { is_approved: false });
-        console.log('Questionnaire IDs with unapproved questions:', unapprovedQuestionnaireIds);
+        // Get questionnaire_ids where ALL languages are approved
+        const fullyApprovedQuestionnaireIds = await Question.aggregate([
+            { $group: { 
+                _id: '$questionnaire_id', 
+                totalQuestions: { $sum: 1 },
+                approvedQuestions: { $sum: { $cond: [{ $and: ['$is_approved', { $eq: ['$status', 'approved'] }] }, 1, 0] } }
+            }},
+            { $match: { $expr: { $eq: ['$totalQuestions', '$approvedQuestions'] } } },
+            { $project: { _id: 1 } }
+        ]);
+        
+        const approvedQids = fullyApprovedQuestionnaireIds.map(item => item._id.toString());
+        console.log('Fully approved questionnaire IDs:', approvedQids);
 
-        // Filter out questions that don't have valid options OR have unapproved translations
+        // Filter questions to only include those from fully approved questionnaire groups
         const validQuestions = questionsWithOptions.filter(q => {
-            // Check if this questionnaire_id has any unapproved questions
-            const hasUnapprovedTranslations = unapprovedQuestionnaireIds.some(unapprovedId => 
-                unapprovedId.toString() === q.qid.toString()
-            );
+            const isFullyApproved = approvedQids.includes(q.qid.toString());
             
-            if (hasUnapprovedTranslations) {
-                console.log(`Filtering out question with questionnaire_id: ${q.qid} - has unapproved translations`);
+            if (!isFullyApproved) {
+                console.log(`Filtering out question with questionnaire_id: ${q.qid} - not all translations approved`);
                 return false;
             }
             
-            // Check for valid options (existing logic)
+            // Check for valid options
             if (q.type === 'freetext') {
-                return true; // Freetext questions don't need options
+                return true;
             }
             
-            // For multiple choice questions, check if they have options
             return q.options && q.options.length > 0;
         });
         console.log('Valid questions:', validQuestions);
@@ -425,7 +431,7 @@ app.post('/api/chat', async (req, res) => {
                 answerPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
                 The current question being answered is: "${currentQuestionObj.question}".
                 The user's response options are: ${currentQuestionObj.options.join(', ')}.
-                There are a total of ${questions.length} questions. The current question is question number ${parseInt(currentQuestionObj.id) + 1}.`;
+                There are a total of ${questions.length} questions. The current question is question number ${actualQuestionIndex + 1}.`;
             }
  
             answerPrompt += `
@@ -434,9 +440,9 @@ app.post('/api/chat', async (req, res) => {
             if (currentQuestionObj.type === 'freetext') {
                 answerPrompt += `
                 For FREE TEXT questions, you MUST respond with one of the following actions:
-                - "ask_question": If the user provides any meaningful response (even if brief), and there are more questions remaining after this one.
+                - "ask_question": If the user provides any meaningful response (even if brief), and there are more questions remaining after this one (current question ${actualQuestionIndex + 1} of ${questions.length}).
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Thank you for sharing.", "I understand.", "Got it."). The backend will append the next question.
-                - "complete": If the user provides any meaningful response, and this is the *last* question.
+                - "complete": If the user provides any meaningful response, and this is the *last* question (question ${actualQuestionIndex + 1} of ${questions.length}).
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Thank you for your response.", "I appreciate your input."). The backend will generate the completion message.
                 - "repeat_question_gemini_detected": If the user's input clearly asks to repeat the question (e.g., "repeat that", "say it again", "what was the question?", "can you repeat?").
                     The "assistantMessage" should be a confirmation (e.g., "Certainly, here is the question again." or "No problem, listening again for this question.").
@@ -444,9 +450,9 @@ app.post('/api/chat', async (req, res) => {
             } else {
                 answerPrompt += `
                 You MUST respond with one of the following actions:
-                - "ask_question": If the user's input clearly indicates one of the fixed options, and there are more questions remaining after this one.
+                - "ask_question": If the user's input clearly indicates one of the fixed options, and there are more questions remaining after this one (current question ${actualQuestionIndex + 1} of ${questions.length}).
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Okay.", "Got it."). The backend will append the next question.
-                - "complete": If the user's input clearly indicates one of the fixed options, and this is the *last* question.
+                - "complete": If the user's input clearly indicates one of the fixed options, and this is the *last* question (question ${actualQuestionIndex + 1} of ${questions.length}).
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Great."). The backend will generate the completion message.
                 - "clarify_and_confirm": If the input is vague or could refer to multiple options, infer the most likely option.
                     The assistantMessage should then ask for confirmation of the inferred option AND provide the list of options for clarity.
@@ -503,13 +509,8 @@ app.post('/api/chat', async (req, res) => {
             if (actionToFrontend === 'ask_question') {
                 session.lastPredictedOption = null; // Clear if not needed
  
-                // Find the next *unanswered* question or just the next sequential one
-                // This logic handles both regular progression and continuing after a re-answer
-                let nextIndex = actualQuestionIndex + 1; // Start checking from the next logical question
-                while (nextIndex < questions.length && userResponses[questions[nextIndex].id]) {
-                    // Skip questions that are already answered
-                    nextIndex++;
-                }
+                // Find the next question (don't skip answered ones for now)
+                let nextIndex = actualQuestionIndex + 1;
  
                 if (nextIndex < questions.length) {
                     currentQuestionIndex = nextIndex; // Update for session and response
@@ -590,12 +591,12 @@ app.post('/api/chat', async (req, res) => {
                     There are a total of ${questions.length} questions. The current question is question number ${actualQuestionIndex + 1}.
  
                     If confirmed:
-                    - Set "action" to "ask_question" if more questions, or "complete" if last question.
+                    - Set "action" to "ask_question" if more questions remain (current question ${actualQuestionIndex + 1} of ${questions.length}), or "complete" if this is the last question.
                     - Provide a *simple acknowledgement* in "assistantMessage" (e.g., "Confirmed.", "Okay."). The backend will append the next question/completion.
                     - The confirmed answer is "${lastPredictedOption}".
  
                     If denied AND a new clear option is provided (e.g., user says "no, I mean Rarely"):
-                    - Set "action" to "ask_question" if more questions, or "complete" if last question.
+                    - Set "action" to "ask_question" if more questions remain (current question ${actualQuestionIndex + 1} of ${questions.length}), or "complete" if this is the last question.
                     - Provide a *simple acknowledgement* in "assistantMessage" (e.g., "Understood.", "Correction noted."). The backend will append the next question/completion.
                     - The confirmed answer is the *new* option.
  
@@ -660,11 +661,8 @@ app.post('/api/chat', async (req, res) => {
                     session.lastPredictedOption = null; // Clear predicted option after confirmation
  
                     if (actionToFrontend === 'ask_question') {
-                        // Find the next *unanswered* question or just the next sequential one
+                        // Find the next question
                         let nextIndex = actualQuestionIndex + 1;
-                        while (nextIndex < questions.length && userResponses[questions[nextIndex].id]) {
-                            nextIndex++;
-                        }
  
                         if (nextIndex < questions.length) {
                             currentQuestionIndex = nextIndex; // Update for session and response
@@ -939,6 +937,53 @@ app.get('/api/forms', async (req, res) => {
         const forms = await Form.find().sort({ createdAt: -1 });
         res.json(forms);
     } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Get approved questions for questionnaire
+app.get('/api/forms/approved-questions', async (req, res) => {
+    try {
+        const { language = 'en' } = req.query;
+        
+        // Get questionnaire_ids where ALL languages are approved
+        const fullyApprovedQuestionnaireIds = await Question.aggregate([
+            { $group: { 
+                _id: '$questionnaire_id', 
+                totalQuestions: { $sum: 1 },
+                approvedQuestions: { $sum: { $cond: [{ $and: ['$is_approved', { $eq: ['$status', 'approved'] }] }, 1, 0] } }
+            }},
+            { $match: { $expr: { $eq: ['$totalQuestions', '$approvedQuestions'] } } },
+            { $project: { _id: 1 } }
+        ]);
+        
+        const approvedQids = fullyApprovedQuestionnaireIds.map(item => item._id.toString());
+        
+        // Find questions for the specified language from fully approved questionnaire groups
+        const questions = await Question.find({
+            language: language,
+            is_approved: true,
+            status: 'approved',
+            questionnaire_id: { $in: approvedQids }
+        }).sort({ createdAt: 1 });
+
+        // Get options for each question
+        const questionsWithOptions = await Promise.all(questions.map(async (question) => {
+            const options = await Option.find({ 
+                question_id: question._id 
+            }).sort({ sort_order: 1 });
+
+            return {
+                ...question.toObject(),
+                options: options.map(opt => opt.option_text),
+                qid: question.questionnaire_id
+            };
+        }));
+        
+        console.log(`Found ${questionsWithOptions.length} approved questions for language: ${language}`);
+        res.json(questionsWithOptions);
+    } catch (error) {
+        console.error('Error fetching approved questions:', error);
         res.status(500).json({ error: error.message });
     }
 });

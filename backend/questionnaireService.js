@@ -35,7 +35,7 @@ async function createFormWithQuestions(formTitle, questionsData) {
         for (const questionData of questionsData) {
             // Create questionnaire entry (common ID for all translations)
             const questionnaire = new Questionnaire({ 
-                form_id: form._id 
+                form_id: form._id.toString() 
             });
             await questionnaire.save();
 
@@ -52,7 +52,7 @@ async function createFormWithQuestions(formTitle, questionsData) {
                 }
 
                 const question = new Question({
-                    questionnaire_id: questionnaire._id,
+                    questionnaire_id: questionnaire._id.toString(),
                     question_text: questionText,
                     language: lang,
                     question_type: questionData.question_type
@@ -104,15 +104,15 @@ async function getFormQuestions(formId, language = 'en') {
         const form = await Form.findById(formId);
         if (!form) throw new Error('Form not found');
 
-        const questionnaires = await Questionnaire.find({ form_id: formId });
-        const questionnaireIds = questionnaires.map(q => q._id);
+        const questionnaires = await Questionnaire.find({ form_id: formId.toString() });
+        const questionnaireIds = questionnaires.map(q => q._id.toString());
 
         const questions = await Question.find({
             questionnaire_id: { $in: questionnaireIds },
             language: language,
             is_approved: true,
             status: 'approved'
-        });
+        }).sort({ createdAt: 1 });
 
         const questionsWithOptions = await Promise.all(questions.map(async (question) => {
             const options = await Option.find({ 
