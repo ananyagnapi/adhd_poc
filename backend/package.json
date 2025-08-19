@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "Node.js Express backend for ADHD Form Assistant with Gemini AI",
+  "description": "Node.js Express backend for ADHD Form Assistant with Local LLM",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
@@ -12,7 +12,7 @@
   "license": "ISC",
   "dependencies": {
     "@google-cloud/text-to-speech": "^6.2.0",
-    "@google-cloud/translate": "^8.5.1",
+    "@google-cloud/translate": "^9.2.0",
     "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",

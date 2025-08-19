@@ -7,9 +7,12 @@ const { v1 } = require('@google-cloud/text-to-speech');
 const { Translate } = require('@google-cloud/translate').v2;
 const connectMongo = require('./db_service/connection');
 const { adminRoutes } = require('./adminService');
-// ADD these imports:
+// Model imports:
+const Form = require('./models/Form');
+const Questionnaire = require('./models/Questionnaire');
 const Question = require('./models/Quetions'); 
 const Option = require('./models/Options');
+const { createFormWithQuestions, getFormQuestions } = require('./questionnaireService');
  
 const app = express();
 const port = process.env.PORT || 3001;
@@ -64,15 +67,27 @@ function safeParseGeminiJson(text) {
 }
  
 app.post('/api/start-session', async (req, res) => {
-    const { language = 'en' } = req.body;
+    console.log("Starting new session with request ");
+    const { language = 'en', formId } = req.body;
     
     try {
-        const questions = await Question.find({ 
-            language: language, 
-            is_approved: true,        // Only approved questions
-            status: 'approved'        // Double check with status field
-        }).sort({ created_at: 1 });
-        console.log("qws", Question)
+        let questions;
+        
+        if (formId) {
+            // Get questions for specific form
+            const formData = await getFormQuestions(formId, language);
+            questions = formData.questions;
+        } else {
+            // Fallback to old method for backward compatibility
+            const questionDocs = await Question.find({ 
+                language: language, 
+                is_approved: true,
+                status: 'approved'
+            }).sort({ createdAt: 1 });
+            
+            questions = questionDocs;
+        }
+        console.log("Questions found:", questions.length);
     
          const questionsWithOptions = await Promise.all(questions.map(async (question) => {
             const options = await Option.find({ 
@@ -92,51 +107,48 @@ app.post('/api/start-session', async (req, res) => {
             };
         }));
 
-        // Get all qids that have any unapproved questions
-const unapprovedQids = await Question.distinct('qid', { is_approved: false });
-console.log('QIDs with unapproved questions:', unapprovedQids);
+        // Get all questionnaire_ids that have any unapproved questions
+        const unapprovedQuestionnaireIds = await Question.distinct('questionnaire_id', { is_approved: false });
+        console.log('Questionnaire IDs with unapproved questions:', unapprovedQuestionnaireIds);
 
-// Filter out questions that don't have valid options OR have unapproved translations
-const validQuestions = questionsWithOptions.filter(q => {
-    // Check if this qid has any unapproved questions
-    const hasUnapprovedTranslations = unapprovedQids.some(unapprovedQid => 
-        unapprovedQid.toString() === q.qid.toString()
-    );
-    
-    if (hasUnapprovedTranslations) {
-        console.log(`Filtering out question with qid: ${q.qid} - has unapproved translations`);
-        return false;
-    }
-    
-    // Check for valid options (existing logic)
-    if (q.type === 'freetext') {
-        return true; // Freetext questions don't need options
-    }
-    
-    const hasValidOptions = q.options && q.options.length > 0;
-    if (!hasValidOptions) {
-        console.log(`Filtering out question with qid: ${q.qid} - no valid options`);
-    }
-    
-    return hasValidOptions;
-});
-
-if (validQuestions.length === 0) {
-    return res.status(400).json({ 
-        error: `No approved questions with valid options found for language: ${language}` 
-    });
-}
-        const sessionId = generateSessionId();
-        sessions.set(sessionId, {
-            conversationHistory: [],
-            responses: {},
-            currentQuestionIndex: 0,
-            lastPredictedOption: null,
-            lastQuestionOptions: [],
-            reviewMode: false,
-            language: language,
-            questions: validQuestions // Store only valid approved questions in session
+        // Filter out questions that don't have valid options OR have unapproved translations
+        const validQuestions = questionsWithOptions.filter(q => {
+            // Check if this questionnaire_id has any unapproved questions
+            const hasUnapprovedTranslations = unapprovedQuestionnaireIds.some(unapprovedId => 
+                unapprovedId.toString() === q.qid.toString()
+            );
+            
+            if (hasUnapprovedTranslations) {
+                console.log(`Filtering out question with questionnaire_id: ${q.qid} - has unapproved translations`);
+                return false;
+            }
+            
+            // Check for valid options (existing logic)
+            if (q.type === 'freetext') {
+                return true; // Freetext questions don't need options
+            }
+            
+            // For multiple choice questions, check if they have options
+            return q.options && q.options.length > 0;
         });
+        console.log('Valid questions:', validQuestions);
+
+        if (validQuestions.length === 0) {
+            return res.status(400).json({ 
+                error: `No approved questions with valid options found for language: ${language}` 
+            });
+        }
+                const sessionId = generateSessionId();
+                sessions.set(sessionId, {
+                    conversationHistory: [],
+                    responses: {},
+                    currentQuestionIndex: 0,
+                    lastPredictedOption: null,
+                    lastQuestionOptions: [],
+                    reviewMode: false,
+                    language: language,
+                    questions: validQuestions // Store only valid approved questions in session
+                });
         
         console.log(`New session started: ${sessionId} (Language: ${language}, Valid Questions: ${validQuestions.length})`);
         res.json({ sessionId, language, totalQuestions: validQuestions.length });
@@ -858,6 +870,79 @@ app.post('/api/translate', async (req, res) => {
     }
 });
  
+// Form management endpoints
+app.post('/api/forms', async (req, res) => {
+    try {
+        const { title, questions } = req.body;
+        const result = await createFormWithQuestions(title, questions);
+        res.json({
+            success: true,
+            form: result.form,
+            questionnaires_created: result.questionnaires.length,
+            total_questions: result.questionnaires.length * 3, // 3 languages each
+            message: `Created form '${title}' with ${result.questionnaires.length} question groups (${result.questionnaires.length * 3} total questions)`
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Test endpoint to create sample form
+app.post('/api/test-form', async (req, res) => {
+    try {
+        const sampleData = {
+            title: "ADHD Assessment Form",
+            questions: [
+                {
+                    question_text: "How often do you have trouble focusing?",
+                    question_type: "multiple_choice",
+                    options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"]
+                },
+                {
+                    question_text: "How often do you feel restless?",
+                    question_type: "multiple_choice",
+                    options: ["Never", "Rarely", "Sometimes", "Often", "Very Often"]
+                },
+                {
+                    question_text: "Describe your daily routine",
+                    question_type: "freetext"
+                }
+            ]
+        };
+        
+        const result = await createFormWithQuestions(sampleData.title, sampleData.questions);
+        res.json({
+            success: true,
+            message: "Test form created successfully!",
+            form_id: result.form._id,
+            questionnaires_created: result.questionnaires.length,
+            total_questions: result.questionnaires.length * 3
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/forms/:formId/questions', async (req, res) => {
+    try {
+        const { formId } = req.params;
+        const { language = 'en' } = req.query;
+        const result = await getFormQuestions(formId, language);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+app.get('/api/forms', async (req, res) => {
+    try {
+        const forms = await Form.find().sort({ createdAt: -1 });
+        res.json(forms);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // REGISTER ADMIN ROUTES
 adminRoutes(app);
 

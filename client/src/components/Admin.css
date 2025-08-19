@@ -512,3 +512,266 @@
   font-weight: normal;
   font-style: italic;
 }
+
+.preview-section {
+  background: #f8f9fa;
+  padding: 25px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  margin-bottom: 20px;
+}
+
+.preview-section h2 {
+  margin-top: 0;
+  color: #1BA7E8;
+}
+
+.preview-grid {
+  display: flex;
+  gap: 15px;
+  flex-wrap: wrap;
+}
+
+.preview-card {
+  flex: 1;
+  min-width: 250px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 15px;
+  background: white;
+}
+
+.preview-card.language-en {
+  border-color: #1BA7E8;
+  background: #f0f9ff;
+}
+
+.preview-card.language-es {
+  border-color: #f57c00;
+  background: #fff8e1;
+}
+
+.preview-card.language-hi {
+  border-color: #2e7d32;
+  background: #e8f5e9;
+}
+
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.preview-content p {
+  margin: 8px 0;
+}
+
+.preview-content ul {
+  margin: 5px 0;
+  padding-left: 20px;
+}
+
+.status {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.status.approved {
+  background: #d4edda;
+  color: #155724;
+}
+
+.status.pending {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.preview-btn {
+  background: #17a2b8;
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+  margin-right: 10px;
+}
+
+.preview-btn:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.form-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #ddd;
+}
+
+.questions-counter {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.questions-counter span {
+  color: #1BA7E8;
+  font-weight: bold;
+}
+
+.save-all-btn {
+  background: #28a745;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.save-all-btn:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.add-question-btn {
+  background: #1BA7E8;
+  color: white;
+  border: none;
+  padding: 12px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: bold;
+}
+
+.add-question-btn:disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.questions-queue {
+  background: #f8f9fa;
+  padding: 20px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  margin-bottom: 20px;
+}
+
+.questions-queue h2 {
+  margin-top: 0;
+  color: #1BA7E8;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.queue-item {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 15px;
+}
+
+.queue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.queue-number {
+  background: #1BA7E8;
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+.remove-queue-btn {
+  background: #dc3545;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 25px;
+  height: 25px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.queue-content p {
+  margin: 5px 0;
+  font-size: 14px;
+}
+
+.translations-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.translation-card {
+  flex: 1;
+  min-width: 200px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px;
+  background: white;
+}
+
+.translation-card.language-en {
+  border-color: #1BA7E8;
+  background: #f0f9ff;
+}
+
+.translation-card.language-es {
+  border-color: #f57c00;
+  background: #fff8e1;
+}
+
+.translation-card.language-hi {
+  border-color: #2e7d32;
+  background: #e8f5e9;
+}
+
+.translation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #eee;
+}
+
+.translation-content p {
+  margin: 5px 0;
+  font-size: 13px;
+}
+
+.translation-content ul {
+  margin: 5px 0;
+  padding-left: 15px;
+  font-size: 12px;
+}
+
+.translation-content li {
+  margin-bottom: 2px;
+}

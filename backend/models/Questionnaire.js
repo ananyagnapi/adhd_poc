@@ -1,7 +1,9 @@
 const mongoose = require('mongoose');
 
 const questionnaireSchema = new mongoose.Schema({
-  title: { type: String, required: true }
+  form_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Form', required: true }
+}, {
+  timestamps: true
 });
 
 const Questionnaire = mongoose.model('Questionnaire', questionnaireSchema);

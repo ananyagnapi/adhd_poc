@@ -38,6 +38,10 @@ const Admin = () => {
   const [editingId, setEditingId] = useState(null);
   const [loading, setLoading] = useState(false);
   const [detectedLanguage, setDetectedLanguage] = useState('en');
+  const [previewQuestions, setPreviewQuestions] = useState([]);
+  const [showPreview, setShowPreview] = useState(false);
+  const [questionsList, setQuestionsList] = useState([]);
+  const [formTitle, setFormTitle] = useState('ADHD Assessment Form');
 
   // Get questions from Redux store
   const allQuestions = useSelector((state) => state.quetion.quetionData) || [];
@@ -92,6 +96,125 @@ const Admin = () => {
     } catch (error) {
       console.error('Error fetching questions:', error);
     }
+  };
+
+  const handlePreview = async () => {
+    if (!newQuestion.question?.trim()) {
+      alert('Question text is required for preview');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/questions/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: newQuestion.question,
+          type: newQuestion.type,
+          options: newQuestion.type === 'options' ? newQuestion.options : []
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setPreviewQuestions(data.questions);
+        setShowPreview(true);
+      } else {
+        alert(`Preview failed: ${data.error}`);
+      }
+    } catch (error) {
+      alert(`Preview error: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addToQuestionsList = async () => {
+    if (!newQuestion.question?.trim()) {
+      alert('Question text is required');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/admin/questions/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          question: newQuestion.question,
+          type: newQuestion.type,
+          options: newQuestion.type === 'options' ? newQuestion.options : []
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        setQuestionsList([...questionsList, {
+          id: Date.now(),
+          originalQuestion: newQuestion.question,
+          type: newQuestion.type,
+          options: newQuestion.options,
+          translations: data.questions
+        }]);
+        
+        setNewQuestion({
+          ...newQuestion,
+          question: '',
+          options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
+        });
+      } else {
+        alert(`Preview failed: ${data.error}`);
+      }
+    } catch (error) {
+      alert(`Preview error: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const saveAllQuestions = async () => {
+    if (!questionsList.length) {
+      alert('Please add questions first');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const allTranslations = questionsList.flatMap(q => q.translations);
+      
+      const response = await fetch(`${API_BASE_URL}/admin/questions/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: formTitle,
+          questions: allTranslations
+        })
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        alert(`${questionsList.length} questions saved successfully!`);
+        setQuestionsList([]);
+        setNewQuestion({
+          title: 'Default Questionnaire',
+          question: '',
+          type: 'options',
+          options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
+        });
+        await fetchQuestions();
+      } else {
+        alert(`Save failed: ${data.error}`);
+      }
+    } catch (error) {
+      alert(`Save error: ${error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const removeFromQuestionsList = (id) => {
+    setQuestionsList(questionsList.filter(q => q.id !== id));
   };
 
   const handleSubmit = async (e) => {
@@ -361,18 +484,29 @@ const Admin = () => {
         <div className="question-form">
           <h2>{editingId ? 'Edit Question' : 'Add New Question'}</h2>
     
-          <form onSubmit={handleSubmit}>
+          <div className="form-header">
             <div className="form-group">
-              <label>Questionnaire Title:</label>
+              <label>Form Title:</label>
               <input
                 type="text"
-                value={newQuestion.title}
-                onChange={(e) => setNewQuestion({ ...newQuestion, title: e.target.value })}
-                placeholder="Enter questionnaire title..."
+                value={formTitle}
+                onChange={(e) => setFormTitle(e.target.value)}
+                placeholder="Enter form title..."
                 required
                 style={{ color: '#333', backgroundColor: '#f9f9f9' }}
               />
             </div>
+            {questionsList.length > 0 && (
+              <div className="questions-counter">
+                <span>{questionsList.length} question(s) added</span>
+                <button type="button" onClick={saveAllQuestions} disabled={loading} className="save-all-btn">
+                  {loading ? 'Saving...' : `Save All ${questionsList.length} Questions`}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <form onSubmit={(e) => e.preventDefault()}>
 
             <div className="form-group">
               <label>Question:</label>
@@ -445,29 +579,81 @@ const Admin = () => {
             )}
 
             <div className="form-actions">
-              <button type="submit" disabled={loading} className="save-btn">
-                {loading ? 'Saving & Translating...' : (editingId ? 'Update Question' : 'Add Question')}
-              </button>
-              {editingId && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditingId(null);
-                    setNewQuestion({
-                      title: 'Default Questionnaire',
-                      question: '',
-                      type: 'options',
-                      options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
-                    });
-                  }}
-                  className="cancel-btn"
-                >
-                  Cancel
+              {!editingId && (
+                <button type="button" onClick={addToQuestionsList} disabled={loading} className="add-question-btn">
+                  {loading ? 'Adding...' : 'Add Question'}
                 </button>
+              )}
+              {editingId && (
+                <>
+                  <button onClick={handleSubmit} disabled={loading} className="save-btn">
+                    {loading ? 'Updating...' : 'Update Question'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingId(null);
+                      setNewQuestion({
+                        title: 'Default Questionnaire',
+                        question: '',
+                        type: 'options',
+                        options: ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
+                      });
+                    }}
+                    className="cancel-btn"
+                  >
+                    Cancel
+                  </button>
+                </>
               )}
             </div>
           </form>
         </div>
+
+        {questionsList.length > 0 && (
+          <div className="questions-queue">
+            <h2>Questions to Save ({questionsList.length})</h2>
+            <div className="queue-list">
+              {questionsList.map((questionItem, index) => (
+                <div key={questionItem.id} className="queue-item">
+                  <div className="queue-header">
+                    <span className="queue-number">Q{index + 1}</span>
+                    <button onClick={() => removeFromQuestionsList(questionItem.id)} className="remove-queue-btn">
+                      ×
+                    </button>
+                  </div>
+                  <div className="queue-content">
+                    <div className="translations-grid">
+                      {questionItem.translations.map((translation, i) => (
+                        <div key={i} className={`translation-card language-${translation.language}`}>
+                          <div className="translation-header">
+                            <span className={`language-name language-${translation.language}`}>
+                              {LANGUAGES[translation.language]}
+                            </span>
+                            <span className={`status ${translation.status}`}>{translation.status}</span>
+                          </div>
+                          <div className="translation-content">
+                            <p><strong>Question:</strong> {translation.question_text}</p>
+                            {translation.options && translation.options.length > 0 && (
+                              <div>
+                                <strong>Options:</strong>
+                                <ul>
+                                  {translation.options.map((option, optIndex) => (
+                                    <li key={optIndex}>{option}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="questions-list">
           <h2>Existing Questions ({questionsForDisplay.length})</h2>

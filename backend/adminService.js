@@ -1,4 +1,5 @@
 const { Translate } = require('@google-cloud/translate').v2;
+const Form = require('./models/Form');
 const Questionnaire = require('./models/Questionnaire');
 const Question = require('./models/Quetions'); 
 const Option = require('./models/Options');
@@ -46,7 +47,8 @@ const adminRoutes = (app) => {
         const options = await Option.find({ question_id: question._id }).sort({ sort_order: 1 });
         return {
           ...question.toObject(),
-          options: options.map(opt => opt.option_text)
+          options: options.map(opt => opt.option_text),
+          qid: question.questionnaire_id // Add qid for compatibility
         };
       }));
       
@@ -57,14 +59,9 @@ const adminRoutes = (app) => {
     }
   });
 
-  app.post('/api/admin/questions', async (req, res) => {
-    const { title, question, type = 'options', options = [] } = req.body;
-    console.log("Request body:", req.body);
-
-    // Validation
-    if (!title?.trim()) {
-        return res.status(400).json({ error: 'Questionnaire title is required' });
-    }
+  // Preview questions without saving to database
+  app.post('/api/admin/questions/preview', async (req, res) => {
+    const { question, type = 'options', options = [] } = req.body;
 
     if (!question?.trim()) {
         return res.status(400).json({ error: 'Question is required' });
@@ -75,22 +72,165 @@ const adminRoutes = (app) => {
     }
 
     try {
-        // 🔸 Step 1: Detect the language of the input question
+        const detectedLanguage = await detectLanguage(question.trim());
+        const previewQuestions = [];
+
+        for (const langCode of SUPPORTED_LANGUAGES) {
+            let questionText = question.trim();
+            let questionOptions = [...options];
+            
+            if (langCode !== detectedLanguage) {
+                try {
+                    const [translatedQuestion] = await translateClient.translate(question.trim(), {
+                        from: detectedLanguage,
+                        to: langCode
+                    });
+                    questionText = translatedQuestion;
+
+                    if (type === 'options' && options.length > 0) {
+                        const [translatedOptions] = await translateClient.translate(options, {
+                            from: detectedLanguage,
+                            to: langCode
+                        });
+                        questionOptions = Array.isArray(translatedOptions) ? translatedOptions : [translatedOptions];
+                    }
+                } catch (translateError) {
+                    questionText = `Translation pending for ${langCode}`;
+                    questionOptions = options.map(() => `Translation pending for ${langCode}`);
+                }
+            }
+
+            previewQuestions.push({
+                question_text: questionText,
+                language: langCode,
+                question_type: type,
+                options: questionOptions,
+                is_approved: langCode === detectedLanguage,
+                status: langCode === detectedLanguage ? 'approved' : 'pending'
+            });
+        }
+
+        res.json({
+            message: 'Question preview generated',
+            detected_language: detectedLanguage,
+            questions: previewQuestions
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: 'Preview generation failed', details: err.message });
+    }
+  });
+
+  // Save questions to database
+  app.post('/api/admin/questions/save', async (req, res) => {
+    const { title, questions, form_id } = req.body;
+
+    if (!questions || !Array.isArray(questions)) {
+        return res.status(400).json({ error: 'Questions array is required' });
+    }
+
+    try {
+        let formDoc;
+        if (form_id) {
+            formDoc = await Form.findById(form_id);
+            if (!formDoc) {
+                return res.status(400).json({ error: 'Form not found' });
+            }
+        } else {
+            if (!title?.trim()) {
+                return res.status(400).json({ error: 'Form title is required when creating new form' });
+            }
+            formDoc = await Form.create({ title: title.trim() });
+        }
+
+        // Group questions by language sets (every 3 questions = 1 question group)
+        const questionGroups = [];
+        for (let i = 0; i < questions.length; i += 3) {
+            questionGroups.push(questions.slice(i, i + 3));
+        }
+
+        const allCreatedQuestions = [];
+        let totalQuestionnaires = 0;
+
+        for (const questionGroup of questionGroups) {
+            const questionnaireDoc = await Questionnaire.create({ form_id: formDoc._id });
+            totalQuestionnaires++;
+
+            for (const questionData of questionGroup) {
+                const questionDoc = new Question({
+                    questionnaire_id: questionnaireDoc._id,
+                    question_text: questionData.question_text,
+                    language: questionData.language,
+                    question_type: questionData.question_type,
+                    is_approved: questionData.is_approved,
+                    status: questionData.status
+                });
+
+                await questionDoc.save();
+                allCreatedQuestions.push(questionDoc);
+
+                if (questionData.options && questionData.options.length > 0) {
+                    const optionDocs = questionData.options.map((opt, i) => ({
+                        question_id: questionDoc._id,
+                        option_text: opt,
+                        sort_order: i
+                    }));
+                    await Option.insertMany(optionDocs);
+                }
+            }
+        }
+
+        res.status(201).json({
+            message: 'Questions saved successfully',
+            form_id: formDoc._id,
+            form_title: formDoc.title,
+            total_questions_created: allCreatedQuestions.length,
+            total_questionnaires_created: totalQuestionnaires,
+            questions_per_language: totalQuestionnaires
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: 'Save failed', details: err.message });
+    }
+  });
+
+  app.post('/api/admin/questions', async (req, res) => {
+    const { title, question, type = 'options', options = [], form_id } = req.body;
+    console.log("Request body:", req.body);
+
+    if (!question?.trim()) {
+        return res.status(400).json({ error: 'Question is required' });
+    }
+
+    if (type === 'options' && (!Array.isArray(options) || options.length < 2)) {
+        return res.status(400).json({ error: 'Options-based questions require at least 2 options' });
+    }
+
+    try {
         const detectedLanguage = await detectLanguage(question.trim());
         console.log(`Detected language: ${detectedLanguage} for question: "${question.trim()}"`);
 
-        // 🔸 Step 2: Create questionnaire first
-        const questionnaireDoc = await Questionnaire.create({ title: title.trim() });
+        let formDoc;
+        if (form_id) {
+            formDoc = await Form.findById(form_id);
+            if (!formDoc) {
+                return res.status(400).json({ error: 'Form not found' });
+            }
+        } else {
+            if (!title?.trim()) {
+                return res.status(400).json({ error: 'Form title is required when creating new form' });
+            }
+            formDoc = await Form.create({ title: title.trim() });
+        }
+
+        const questionnaireDoc = await Questionnaire.create({ form_id: formDoc._id });
         const qid = questionnaireDoc._id;
 
         const baseQuestionData = {
-        question_type: type,
-        created_at: new Date().toISOString(),
-        created_by: null,
-        updated_by: null,
-        qid: qid,
-        title: title.trim()  // <- Add this line
-    };
+            question_type: type,
+            created_by: null,
+            updated_by: null
+        };
 
         // 🔸 Step 4: Create questions for all languages
         const createdQuestions = [];
@@ -126,11 +266,11 @@ const adminRoutes = (app) => {
 
             const questionDoc = new Question({
                 ...baseQuestionData,
+                questionnaire_id: qid,
                 question_text: questionText,
                 language: langCode,
                 is_approved: langCode === detectedLanguage,
-                status: langCode === detectedLanguage ? 'approved' : 'pending',
-                title: title.trim()  // <- Add this line
+                status: langCode === detectedLanguage ? 'approved' : 'pending'
             });
 
             await questionDoc.save();
@@ -140,12 +280,7 @@ const adminRoutes = (app) => {
                 const optionDocs = questionOptions.map((opt, i) => ({
                     question_id: questionDoc._id,
                     option_text: opt,
-                    sort_order: i,
-                    language: langCode,
-                    is_approved: langCode === detectedLanguage, 
-                    created_at: new Date().toISOString(),
-                    created_by: null,
-                    updated_by: null
+                    sort_order: i
                 }));
                 await Option.insertMany(optionDocs);
             }
@@ -154,21 +289,18 @@ const adminRoutes = (app) => {
          const response = {
             message: 'Questions created successfully in all languages',
             detected_language: detectedLanguage,
+            form_id: formDoc._id,
             questionnaire_id: qid,
-            questionnaire_title: title.trim(), 
+            form_title: formDoc.title, 
             questions: createdQuestions.map(q => ({
-            _id: q._id,
-            question_text: q.question_text,
-            language: q.language,
-            question_type: q.question_type,
-            is_approved: q.is_approved,
-            created_at: q.created_at,
-            created_by: q.created_by,
-            updated_by: q.updated_by,
-            status: q.status,
-            qid: q.qid,
-            title: q.title
-        })),
+                _id: q._id,
+                questionnaire_id: q.questionnaire_id,
+                question_text: q.question_text,
+                language: q.language,
+                question_type: q.question_type,
+                is_approved: q.is_approved,
+                status: q.status
+            })),
             total_questions_created: createdQuestions.length,
             languages_created: SUPPORTED_LANGUAGES
         };
@@ -221,7 +353,7 @@ const adminRoutes = (app) => {
     const { qid, language } = req.params;
 
     try {
-      const questions = await Question.find({ qid: qid, language: language });
+      const questions = await Question.find({ questionnaire_id: qid, language: language });
       
       const questionsWithOptions = await Promise.all(questions.map(async (question) => {
         const options = await Option.find({ 
@@ -300,9 +432,9 @@ const adminRoutes = (app) => {
           }
         }
 
-        // 3. Find all other language versions of this question (same qid, different language)
+        // 3. Find all other language versions of this question (same questionnaire_id, different language)
         const relatedQuestions = await Question.find({ 
-          qid: existing.qid, 
+          questionnaire_id: existing.questionnaire_id, 
           language: { $ne: existing.language } 
         });
 
@@ -536,7 +668,7 @@ const adminRoutes = (app) => {
     const { qid } = req.params;
 
     try {
-      const questions = await Question.find({ qid: qid });
+      const questions = await Question.find({ questionnaire_id: qid });
       const questionIds = questions.map(q => q._id);
 
       // Delete all options first
@@ -545,7 +677,7 @@ const adminRoutes = (app) => {
       });
 
       // Delete all questions
-      const deletedQuestions = await Question.deleteMany({ qid: qid });
+      const deletedQuestions = await Question.deleteMany({ questionnaire_id: qid });
 
       res.json({ 
         message: 'All questions and options for questionnaire deleted successfully',
@@ -564,7 +696,7 @@ const adminRoutes = (app) => {
     const { qid } = req.params;
 
     try {
-      const questions = await Question.find({ qid: qid });
+      const questions = await Question.find({ questionnaire_id: qid });
       const questionIds = questions.map(q => q._id);
 
       // Delete all options first
@@ -573,7 +705,7 @@ const adminRoutes = (app) => {
       });
 
       // Delete all questions
-      const deletedQuestions = await Question.deleteMany({ qid: qid });
+      const deletedQuestions = await Question.deleteMany({ questionnaire_id: qid });
 
       res.json({ 
         message: 'All questions and options for questionnaire deleted successfully',
