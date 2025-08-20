@@ -172,8 +172,12 @@ const adminRoutes = (app) => {
                 if (questionData.options && questionData.options.length > 0) {
                     const optionDocs = questionData.options.map((opt, i) => ({
                         question_id: questionDoc._id,
+                        questionnaire_id: questionnaireDoc._id,
                         option_text: opt,
-                        sort_order: i
+                        sort_order: i,
+                        language: questionData.language,
+                        is_approved: questionData.is_approved || true,
+                        status: questionData.status || 'approved'
                     }));
                     await Option.insertMany(optionDocs);
                 }
