@@ -113,6 +113,8 @@ function Questionnaire() {
   const [awaitingConfirmation, setAwaitingConfirmation] = useState(false);
   const [selectedAvatar, setSelectedAvatar] = useState(null); // Stores the full avatar object
   const [languageSelected, setLanguageSelected] = useState(false); // Track if language is selected
+  const [approvedQuestions, setApprovedQuestions] = useState([]);
+  const [isLoadingApproved, setIsLoadingApproved] = useState(false);
  
   // --- New States for Final Confirmation ---
   const [showFinalConfirmation, setShowFinalConfirmation] = useState(false);

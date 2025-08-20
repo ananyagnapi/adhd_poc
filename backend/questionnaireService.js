@@ -73,8 +73,12 @@ async function createFormWithQuestions(formTitle, questionsData) {
 
                         const option = new Option({
                             question_id: question._id,
+                            questionnaire_id: questionnaire._id,
                             option_text: optionText,
-                            sort_order: i
+                            sort_order: i,
+                            language: lang,
+                            is_approved: true,
+                            status: 'approved'
                         });
                         
                         await option.save();
@@ -116,7 +120,10 @@ async function getFormQuestions(formId, language = 'en') {
 
         const questionsWithOptions = await Promise.all(questions.map(async (question) => {
             const options = await Option.find({ 
-                question_id: question._id 
+                questionnaire_id: question.questionnaire_id,
+                language: language,
+                is_approved: true,
+                status: 'approved'
             }).sort({ sort_order: 1 });
 
             return {

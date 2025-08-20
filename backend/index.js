@@ -91,11 +91,13 @@ app.post('/api/start-session', async (req, res) => {
     
          const questionsWithOptions = await Promise.all(questions.map(async (question) => {
             const options = await Option.find({ 
-                question_id: question._id,
+                questionnaire_id: question.questionnaire_id,
                 language: language,
                 is_approved: true,
                 status: 'approved'
             }).sort({ sort_order: 1 });
+            
+            console.log(`🔍 Question "${question.question_text}" (${question.question_type}) found ${options.length} options:`, options.map(o => o.option_text));
 
             return {
                 id: question._id.toString(),
@@ -119,25 +121,32 @@ app.post('/api/start-session', async (req, res) => {
         ]);
         
         const approvedQids = fullyApprovedQuestionnaireIds.map(item => item._id.toString());
-        console.log('Fully approved questionnaire IDs:', approvedQids);
+        console.log('🔍 DEBUG: Fully approved questionnaire IDs:', approvedQids);
+        console.log('🔍 DEBUG: Total questionnaires found:', questionsWithOptions.length);
+        questionsWithOptions.forEach(q => {
+            console.log(`🔍 Question: "${q.question}" | QID: ${q.qid} | Approved: ${approvedQids.includes(q.qid.toString())}`);
+        });
 
         // Filter questions to only include those from fully approved questionnaire groups
         const validQuestions = questionsWithOptions.filter(q => {
             const isFullyApproved = approvedQids.includes(q.qid.toString());
             
             if (!isFullyApproved) {
-                console.log(`Filtering out question with questionnaire_id: ${q.qid} - not all translations approved`);
+                console.log(`❌ Filtering out question with questionnaire_id: ${q.qid} - not all translations approved`);
                 return false;
             }
             
             // Check for valid options
             if (q.type === 'freetext') {
+                console.log(`✅ Including freetext question: "${q.question}"`);
                 return true;
             }
             
-            return q.options && q.options.length > 0;
+            const hasOptions = q.options && q.options.length > 0;
+            console.log(`${hasOptions ? '✅' : '❌'} Question "${q.question}" has ${q.options?.length || 0} options`);
+            return hasOptions;
         });
-        console.log('Valid questions:', validQuestions);
+        console.log('🎯 Final valid questions for session:', validQuestions.length);
 
         if (validQuestions.length === 0) {
             return res.status(400).json({ 
@@ -256,7 +265,7 @@ app.post('/api/chat', async (req, res) => {
         currentQuestionObj = questions[session.currentQuestionIndex];
         actualQuestionIndex = session.currentQuestionIndex;
     }
- 
+    console.log('quetion', questions.length)
     try {
         // Add user message to conversation history BEFORE sending to Gemini for context
         conversationHistory.push({ role: 'user', parts: [{ text: userMessage }] });
@@ -440,9 +449,9 @@ app.post('/api/chat', async (req, res) => {
             if (currentQuestionObj.type === 'freetext') {
                 answerPrompt += `
                 For FREE TEXT questions, you MUST respond with one of the following actions:
-                - "ask_question": If the user provides any meaningful response (even if brief), and there are more questions remaining after this one (current question ${actualQuestionIndex + 1} of ${questions.length}).
+                - "ask_question": If the user provides any meaningful response (even if brief), and there are MORE questions remaining after this one. Current question is ${actualQuestionIndex + 1} of ${questions.length} total questions.
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Thank you for sharing.", "I understand.", "Got it."). The backend will append the next question.
-                - "complete": If the user provides any meaningful response, and this is the *last* question (question ${actualQuestionIndex + 1} of ${questions.length}).
+                - "complete": If the user provides any meaningful response, and this is the LAST question. Current question is ${actualQuestionIndex + 1} of ${questions.length} total questions. ONLY use "complete" if ${actualQuestionIndex + 1} equals ${questions.length}.
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Thank you for your response.", "I appreciate your input."). The backend will generate the completion message.
                 - "repeat_question_gemini_detected": If the user's input clearly asks to repeat the question (e.g., "repeat that", "say it again", "what was the question?", "can you repeat?").
                     The "assistantMessage" should be a confirmation (e.g., "Certainly, here is the question again." or "No problem, listening again for this question.").
@@ -450,9 +459,9 @@ app.post('/api/chat', async (req, res) => {
             } else {
                 answerPrompt += `
                 You MUST respond with one of the following actions:
-                - "ask_question": If the user's input clearly indicates one of the fixed options, and there are more questions remaining after this one (current question ${actualQuestionIndex + 1} of ${questions.length}).
+                - "ask_question": If the user's input clearly indicates one of the fixed options, and there are MORE questions remaining after this one. Current question is ${actualQuestionIndex + 1} of ${questions.length} total questions.
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Okay.", "Got it."). The backend will append the next question.
-                - "complete": If the user's input clearly indicates one of the fixed options, and this is the *last* question (question ${actualQuestionIndex + 1} of ${questions.length}).
+                - "complete": If the user's input clearly indicates one of the fixed options, and this is the LAST question. Current question is ${actualQuestionIndex + 1} of ${questions.length} total questions. ONLY use "complete" if ${actualQuestionIndex + 1} equals ${questions.length}.
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Great."). The backend will generate the completion message.
                 - "clarify_and_confirm": If the input is vague or could refer to multiple options, infer the most likely option.
                     The assistantMessage should then ask for confirmation of the inferred option AND provide the list of options for clarity.
@@ -511,6 +520,7 @@ app.post('/api/chat', async (req, res) => {
  
                 // Find the next question (don't skip answered ones for now)
                 let nextIndex = actualQuestionIndex + 1;
+                console.log(`🎯 DEBUG: Current question index: ${actualQuestionIndex}, Next index: ${nextIndex}, Total questions: ${questions.length}`);
  
                 if (nextIndex < questions.length) {
                     currentQuestionIndex = nextIndex; // Update for session and response
@@ -520,6 +530,7 @@ app.post('/api/chat', async (req, res) => {
                     questionIdToFrontend = nextQ.id;
                     session.lastQuestionOptions = nextQ.options || [];
                     const nextQuestionNumber = nextIndex + 1;
+                    console.log(`✅ Moving to next question ${nextQuestionNumber}: "${nextQ.question}"`);
                     if (nextQ.type === 'freetext') {
                         assistantMessage = `${geminiAssistantMessage} Question ${nextQuestionNumber}: ${nextQuestionText}. Please provide your answer in your own words.`;
                     } else {
@@ -527,6 +538,7 @@ app.post('/api/chat', async (req, res) => {
                     }
                 } else {
                     // All questions answered, transition to 'complete'
+                    console.log(`🏁 All questions completed. Moving to complete state.`);
                     actionToFrontend = 'complete';
                     assistantMessage = "You've completed the questionnaire! I'm now summarizing your responses.";
                     nextQuestionText = null;
@@ -537,6 +549,7 @@ app.post('/api/chat', async (req, res) => {
                 }
  
             } else if (actionToFrontend === 'complete') {
+                console.log(`🏁 Gemini returned 'complete' action directly`);
                 session.lastPredictedOption = null;
                 session.lastQuestionOptions = [];
                 nextQuestionText = null;
@@ -958,6 +971,7 @@ app.get('/api/forms/approved-questions', async (req, res) => {
         ]);
         
         const approvedQids = fullyApprovedQuestionnaireIds.map(item => item._id.toString());
+        console.log(`DEBUG: Fully approved questionnaire IDs for ${language}:`, approvedQids);
         
         // Find questions for the specified language from fully approved questionnaire groups
         const questions = await Question.find({
@@ -966,11 +980,16 @@ app.get('/api/forms/approved-questions', async (req, res) => {
             status: 'approved',
             questionnaire_id: { $in: approvedQids }
         }).sort({ createdAt: 1 });
+        console.log(`DEBUG: Found ${questions.length} questions for language ${language} from approved questionnaires`);
+        questions.forEach(q => console.log(`  - Question: ${q.question_text.substring(0, 50)}... (QID: ${q.questionnaire_id})`));
 
         // Get options for each question
         const questionsWithOptions = await Promise.all(questions.map(async (question) => {
             const options = await Option.find({ 
-                question_id: question._id 
+                questionnaire_id: question.questionnaire_id,
+                language: language,
+                is_approved: true,
+                status: 'approved'
             }).sort({ sort_order: 1 });
 
             return {
