@@ -134,27 +134,19 @@ function Questionnaire() {
     }
   }, [selectedAvatar, languageSelected, formStarted]);
 
-  useEffect(() => {
-    const questionData = async () => {
-      try {
-        // Fetch only approved questions for the questionnaire
-        const response = await axios.get(`${API_BASE_URL}/forms/approved-questions?language=${currentLanguage}`);
-        dispatch(addAllQuetions(response.data))
-        console.log('Approved questions loaded:', response.data);
-      } catch (error) {
-        console.error('Error fetching approved questions:', error);
-        // Fallback to admin endpoint if needed
-        try {
-          const fallbackResponse = await axios.get(`${API_BASE_URL}/admin/questions`);
-          const approvedQuestions = fallbackResponse.data.filter(q => q.is_approved && q.status === 'approved');
-          dispatch(addAllQuetions(approvedQuestions));
-        } catch (fallbackError) {
-          console.error('Fallback also failed:', fallbackError);
-        }
-      }
-    };
-    questionData();
-  }, [currentLanguage, dispatch]);
+  // Questions are now loaded through the session, not separately
+  // useEffect(() => {
+  //   const questionData = async () => {
+  //     try {
+  //       const response = await axios.get(`${API_BASE_URL}/forms/approved-questions?language=${currentLanguage}`);
+  //       dispatch(addAllQuetions(response.data))
+  //       console.log('Approved questions loaded:', response.data);
+  //     } catch (error) {
+  //       console.error('Error fetching approved questions:', error);
+  //     }
+  //   };
+  //   questionData();
+  // }, [currentLanguage, dispatch]);
 
 
   // --- Google TTS speakText function ---
@@ -499,7 +491,9 @@ function Questionnaire() {
  
     try {
       const response = await fetch(`${API_BASE_URL}/start-session`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: currentLanguage })
       });
       if (!response.ok) throw new Error('Failed to start session');
       const data = await response.json();
