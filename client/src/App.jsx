@@ -4,7 +4,7 @@ import './App.css';
 import { useTranslation } from './hooks/useTranslation';
 import { voiceMapping } from './translations';
 import LanguageSelector from './components/LanguageSelector';
-import Admin from './components/Admin';
+import AdminNew from './components/AdminNew';
 // --- Static PNG Images for Avatar Selection Options and as default display when not talking ---
 import avatarFemaleAdultPng from './assets/3.png'; // Adult Female PNG
 import avatarMaleAdultPng from './assets/2.png';  // Adult Male PNG
@@ -876,7 +876,7 @@ function App() {
     <Router>
       <Routes>
         <Route path="/" element={<Questionnaire />} />
-        <Route path="/admin" element={<Admin />} />
+        <Route path="/admin" element={<AdminNew />} />
       </Routes>
     </Router>
   );
