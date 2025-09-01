@@ -19,14 +19,37 @@ const port = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json()); // To parse JSON request bodies
  
-// --- Google Gemini Setup ---
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-if (!GEMINI_API_KEY) {
-    console.error("GEMINI_API_KEY is not set in .env file. Please create a .env file with GEMINI_API_KEY='your_api_key'");
-    process.exit(1);
+// --- Ollama Setup ---
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama2';
+
+async function generateWithOllama(prompt, systemPrompt = 'You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.') {
+    try {
+        const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: OLLAMA_MODEL,
+                system: systemPrompt,
+                prompt: prompt,
+                stream: false,
+                max_tokens: 500
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Ollama API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('Ollama response data:', data);
+        
+        return { response: { text: () => data.response || '' } };
+    } catch (error) {
+        console.error('Ollama API error:', error);
+        throw error;
+    }
 }
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro-latest" });
 const ttsClient = new textToSpeech.TextToSpeechClient({
   projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
   credentials: {
@@ -52,16 +75,42 @@ function generateSessionId() {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
  
-// Helper to safely parse Gemini's JSON, handling potential markdown blocks
-function safeParseGeminiJson(text) {
+// Helper to safely parse LLM's JSON, handling potential markdown blocks
+function safeParseLLMJson(text) {
+    if (!text || typeof text !== 'string') {
+        console.error("Invalid text for JSON parsing:", text);
+        return null;
+    }
+    
     try {
+        // First try to find JSON in markdown blocks
         const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/);
         if (jsonMatch && jsonMatch[1]) {
             return JSON.parse(jsonMatch[1]);
         }
-        return JSON.parse(text); // Try parsing directly if no markdown block
+        
+        // Find the first { and find the matching closing }
+        const firstBrace = text.indexOf('{');
+        if (firstBrace === -1) {
+            return JSON.parse(text);
+        }
+        
+        let braceCount = 0;
+        let endIndex = firstBrace;
+        
+        for (let i = firstBrace; i < text.length; i++) {
+            if (text[i] === '{') braceCount++;
+            if (text[i] === '}') braceCount--;
+            if (braceCount === 0) {
+                endIndex = i;
+                break;
+            }
+        }
+        
+        const jsonText = text.substring(firstBrace, endIndex + 1);
+        return JSON.parse(jsonText);
     } catch (e) {
-        console.error("Failed to parse Gemini JSON:", e, "Raw text:", text);
+        console.error("Failed to parse LLM JSON:", e, "Raw text:", text);
         return null;
     }
 }
@@ -88,6 +137,12 @@ app.post('/api/start-session', async (req, res) => {
             questions = questionDocs;
         }
         console.log("Questions found:", questions.length);
+        console.log("Raw questions:", questions.map(q => ({ id: q._id, text: q.question_text, type: q.question_type, qid: q.questionnaire_id })));
+        
+        // Check if Q69 is in the questions
+        const q69Questions = questions.filter(q => q.questionnaire_id === 'Q69');
+        console.log('Q69 questions found:', q69Questions.length);
+        q69Questions.forEach(q => console.log(`Q69 Question: "${q.question_text}" (${q.language})`));
     
          const questionsWithOptions = await Promise.all(questions.map(async (question) => {
             const options = await Option.find({ 
@@ -122,6 +177,7 @@ app.post('/api/start-session', async (req, res) => {
         
         const approvedQids = fullyApprovedQuestionnaireIds.map(item => item._id.toString());
         console.log('🔍 DEBUG: Fully approved questionnaire IDs:', approvedQids);
+        console.log('🔍 DEBUG: Is Q69 in approved list?', approvedQids.includes('Q69'));
         console.log('🔍 DEBUG: Total questionnaires found:', questionsWithOptions.length);
         questionsWithOptions.forEach(q => {
             console.log(`🔍 Question: "${q.question}" | QID: ${q.qid} | Approved: ${approvedQids.includes(q.qid.toString())}`);
@@ -147,11 +203,29 @@ app.post('/api/start-session', async (req, res) => {
             return hasOptions;
         });
         console.log('🎯 Final valid questions for session:', validQuestions.length);
+        console.log('🎯 Valid questions details:', validQuestions.map(q => ({ id: q.id, question: q.question, type: q.type, options: q.options })));
 
         if (validQuestions.length === 0) {
-            return res.status(400).json({ 
-                error: `No approved questions with valid options found for language: ${language}` 
+            console.log('⚠️ No fully approved questions found, trying with individual question approval only');
+            // Fallback: just use questions that are individually approved
+            const fallbackQuestions = questionsWithOptions.filter(q => {
+                if (q.type === 'freetext') {
+                    console.log(`✅ Including freetext question (fallback): "${q.question}"`);
+                    return true;
+                }
+                const hasOptions = q.options && q.options.length > 0;
+                console.log(`${hasOptions ? '✅' : '❌'} Question "${q.question}" has ${q.options?.length || 0} options (fallback)`);
+                return hasOptions;
             });
+            
+            if (fallbackQuestions.length === 0) {
+                return res.status(400).json({ 
+                    error: `No approved questions with valid options found for language: ${language}` 
+                });
+            }
+            
+            validQuestions = fallbackQuestions;
+            console.log('🔄 Using fallback questions:', validQuestions.length);
         }
                 const sessionId = generateSessionId();
                 sessions.set(sessionId, {
@@ -271,72 +345,87 @@ app.post('/api/chat', async (req, res) => {
         conversationHistory.push({ role: 'user', parts: [{ text: userMessage }] });
  
         if (action === 'init_questionnaire') {
-            const initPrompt = `You are an empathetic AI assistant guiding a user through a fixed ADHD questionnaire.
-                Start by introducing the questionnaire, explaining its purpose (to understand daily experiences with information processing and environment interaction, not for diagnosis, emphasizing honesty, no right/wrong answers), and ask if they are ready to begin.
-                The questionnaire has ${questions.length} questions.
+            const initPrompt = `RESPOND ONLY WITH JSON. NO OTHER TEXT.
+
+Return this exact JSON object:
+{
+  "assistantMessage": "Hello! I'm here to guide you through a short questionnaire designed to help us better understand your daily experiences with how you process information and interact with your environment. This isn't a diagnostic tool, so there are no right or wrong answers. Your honest responses are the most valuable. This questionnaire will help you better understand yourself. Are you ready to begin?",
+  "action": "ask_readiness",
+  "questionId": null,
+  "currentQuestionIndex": 0
+}`;
  
-                Your response MUST be a JSON object and NOTHING ELSE.
-                The JSON object MUST have the following exact structure and values for this initial introduction:
-                {
-                  "assistantMessage": "Hello! I'm here to guide you through a short questionnaire designed to help us better understand your daily experiences with how you process information and interact with your environment. This isn't a diagnostic tool, so there are no right or wrong answers. Your honest responses are the most valuable. This questionnaire will help you better understand yourself. Are you ready to begin?",
-                  "action": "ask_readiness",
-                  "questionId": null,
-                  "currentQuestionIndex": 0
-                }
- 
-                STRICTLY output only the JSON object. Do NOT include any markdown formatting (e.g., \`\`\`json), comments, or any extra text before or after the JSON. Provide the JSON directly.`;
- 
-            console.log("Backend: Sending prompt to Gemini for init_questionnaire.");
-            const initResult = await model.generateContent(initPrompt);
+            console.log("Backend: Sending prompt to Ollama for init_questionnaire.");
+            const initResult = await generateWithOllama(initPrompt);
             const initResponseText = initResult.response.text();
-            console.log("Backend: Gemini Raw Response (init_questionnaire):", initResponseText);
+            console.log("Backend: Ollama Raw Response (init_questionnaire):", initResponseText);
  
-            const initData = safeParseGeminiJson(initResponseText);
+            const initData = safeParseLLMJson(initResponseText);
  
             if (!initData) {
-                throw new Error("Gemini response for init_questionnaire could not be parsed.");
+                // Fallback if Ollama doesn't return JSON
+                console.warn("Ollama didn't return JSON, using fallback response");
+                assistantMessage = "Hello! I'm here to guide you through a short questionnaire designed to help us better understand your daily experiences with how you process information and interact with your environment. This isn't a diagnostic tool, so there are no right or wrong answers. Your honest responses are the most valuable. This questionnaire will help you better understand yourself. Are you ready to begin?";
+                actionToFrontend = "ask_readiness";
+                questionIdToFrontend = null;
+                currentQuestionIndex = 0;
+                session.currentQuestionIndex = currentQuestionIndex;
+                session.lastQuestionOptions = [];
+            } else {
+                assistantMessage = initData.assistantMessage;
+                actionToFrontend = initData.action;
+                questionIdToFrontend = initData.questionId;
+                currentQuestionIndex = initData.currentQuestionIndex;
+                session.currentQuestionIndex = currentQuestionIndex;
+                session.lastQuestionOptions = [];
             }
- 
-            assistantMessage = initData.assistantMessage;
-            actionToFrontend = initData.action;
-            questionIdToFrontend = initData.questionId;
-            currentQuestionIndex = initData.currentQuestionIndex; // Should be 0
-            session.currentQuestionIndex = currentQuestionIndex; // Update session index
-            session.lastQuestionOptions = []; // No options at this stage
  
         } else if (action === 'confirm_readiness') {
-            const readinessConfirmationPrompt = `The user's response was "${userMessage}". You previously asked if they were ready to start the questionnaire.
-                Determine if their response indicates they are ready (e.g., "yes", "I am", "ready", "start").
-                If they are ready:
-                - Set "action" to "confirm_readiness".
-                - Provide a short, positive "assistantMessage" acknowledging they are ready.
-                If they are not ready or the response is unclear:
-                - Set "action" to "clarify".
-                - Ask them again if they are ready to begin the questionnaire.
+            const readinessConfirmationPrompt = `RESPOND ONLY WITH JSON. NO OTHER TEXT.
+
+User said: "${userMessage}"
+
+If they seem ready (yes/ready/start), return:
+{
+  "assistantMessage": "Great! Let's begin.",
+  "action": "confirm_readiness",
+  "questionId": null,
+  "currentQuestionIndex": 0
+}
+
+If not ready, return:
+{
+  "assistantMessage": "No problem. Are you ready to begin the questionnaire?",
+  "action": "clarify",
+  "questionId": null,
+  "currentQuestionIndex": 0
+}`;
  
-                Provide your response as a JSON object with:
-                - "assistantMessage": [string]
-                - "action": ["confirm_readiness" or "clarify"]
-                - "questionId": [null]
-                - "currentQuestionIndex": [0]
- 
-                Strictly output only the JSON object. Do not include any other text outside the JSON.`;
- 
-            console.log("Backend: Sending prompt to Gemini for readiness confirmation.");
-            const readinessResult = await model.generateContent(readinessConfirmationPrompt);
+            console.log("Backend: Sending prompt to Ollama for readiness confirmation.");
+            const readinessResult = await generateWithOllama(readinessConfirmationPrompt);
             const readinessResponseText = readinessResult.response.text();
-            console.log("Backend: Gemini Raw Response (readiness confirmation):", readinessResponseText);
+            console.log("Backend: Ollama Raw Response (readiness confirmation):", readinessResponseText);
  
-            const readinessData = safeParseGeminiJson(readinessResponseText);
+            const readinessData = safeParseLLMJson(readinessResponseText);
  
             if (!readinessData) {
-                throw new Error("Gemini response for confirm_readiness could not be parsed.");
+                // Fallback: check if user seems ready based on common responses
+                const isReady = /\b(yes|ready|start|begin|ok|sure)\b/i.test(userMessage);
+                if (isReady) {
+                    assistantMessage = "Great! Let's begin.";
+                    actionToFrontend = "confirm_readiness";
+                } else {
+                    assistantMessage = "No problem. Are you ready to begin the questionnaire?";
+                    actionToFrontend = "clarify";
+                }
+                questionIdToFrontend = null;
+                currentQuestionIndex = 0;
+            } else {
+                assistantMessage = readinessData.assistantMessage;
+                actionToFrontend = readinessData.action;
+                questionIdToFrontend = readinessData.questionId;
+                currentQuestionIndex = readinessData.currentQuestionIndex;
             }
- 
-            assistantMessage = readinessData.assistantMessage;
-            actionToFrontend = readinessData.action;
-            questionIdToFrontend = readinessData.questionId;
-            currentQuestionIndex = readinessData.currentQuestionIndex; // Should still be 0
  
             if (actionToFrontend === 'confirm_readiness') {
                 if (questions.length > 0) {
@@ -486,31 +575,51 @@ app.post('/api/chat', async (req, res) => {
                 ${conversationHistory.map(entry => `${entry.role}: ${entry.parts[0].text}`).join('\n')}
             `;
  
-            console.log("Backend: Sending prompt to Gemini for answer processing (answer/re_answer_specific_question).");
-            const answerResult = await model.generateContent(answerPrompt);
+            console.log("Backend: Sending prompt to Ollama for answer processing (answer/re_answer_specific_question).");
+            const answerResult = await generateWithOllama(answerPrompt);
             const answerResponseText = answerResult.response.text();
-            console.log("Backend: Gemini Raw Response (answer processing):", answerResponseText);
+            console.log("Backend: Ollama Raw Response (answer processing):", answerResponseText);
  
-            const answerData = safeParseGeminiJson(answerResponseText);
+            const answerData = safeParseLLMJson(answerResponseText);
  
             if (!answerData) {
-                throw new Error("Gemini response for answer/re_answer could not be parsed.");
-            }
- 
-            geminiAssistantMessage = answerData.assistantMessage;
-            actionToFrontend = answerData.action;
-            predictedOption = answerData.predictedOption || null;
-            const confirmedAnswer = answerData.confirmedAnswer || null;
- 
-            // Save the confirmed answer for the specific question ID that was being answered/re-answered
-            if (confirmedAnswer) {
+                // Fallback: treat as a valid answer and move to next question
+                console.warn("Ollama didn't return JSON for answer processing, using fallback");
+                
+                // Save the user's response
                 userResponses[currentQuestionObj.id] = {
                     question: currentQuestionObj.question,
-                    answer: confirmedAnswer,
+                    answer: userMessage,
                     rawTranscript: userMessage
                 };
                 session.responses = userResponses;
+                
+                // Determine if there are more questions
+                if (actualQuestionIndex + 1 < questions.length) {
+                    geminiAssistantMessage = "Thank you.";
+                    actionToFrontend = "ask_question";
+                } else {
+                    geminiAssistantMessage = "Thank you for your response.";
+                    actionToFrontend = "complete";
+                }
+                predictedOption = null;
+            } else {
+                geminiAssistantMessage = answerData.assistantMessage;
+                actionToFrontend = answerData.action;
+                predictedOption = answerData.predictedOption || null;
+                const confirmedAnswer = answerData.confirmedAnswer || null;
+                
+                // Save the confirmed answer for the specific question ID that was being answered/re-answered
+                if (confirmedAnswer) {
+                    userResponses[currentQuestionObj.id] = {
+                        question: currentQuestionObj.question,
+                        answer: confirmedAnswer,
+                        rawTranscript: userMessage
+                    };
+                    session.responses = userResponses;
+                }
             }
+
  
             session.lastPredictedOption = predictedOption; // Update last predicted option for confirmation flow
  
@@ -636,15 +745,15 @@ app.post('/api/chat', async (req, res) => {
                     ${conversationHistory.map(entry => `${entry.role}: ${entry.parts[0].text}`).join('\n')}
                 `;
  
-                console.log("Backend: Sending prompt to Gemini for verbal confirmation of vague answer:", confirmationPrompt);
-                const confirmResult = await model.generateContent(confirmationPrompt);
+                console.log("Backend: Sending prompt to Ollama for verbal confirmation of vague answer:", confirmationPrompt);
+                const confirmResult = await generateWithOllama(confirmationPrompt);
                 const confirmResponseText = confirmResult.response.text();
-                console.log("Backend: Gemini Raw Response (verbal confirmation of vague answer):", confirmResponseText);
+                console.log("Backend: Ollama Raw Response (verbal confirmation of vague answer):", confirmResponseText);
  
-                const confirmData = safeParseGeminiJson(confirmResponseText);
+                const confirmData = safeParseLLMJson(confirmResponseText);
  
                 if (!confirmData) {
-                    throw new Error("Gemini response for confirm_vague_answer could not be parsed.");
+                    throw new Error("Ollama response for confirm_vague_answer could not be parsed.");
                 }
  
                 geminiAssistantMessage = confirmData.assistantMessage;

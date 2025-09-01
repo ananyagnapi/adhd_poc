@@ -4,7 +4,7 @@ import './App.css';
 import { useTranslation } from './hooks/useTranslation';
 import { voiceMapping } from './translations';
 import LanguageSelector from './components/LanguageSelector';
-import Admin from './components/Admin';
+import AdminNew from './components/AdminNew';
 // --- Static PNG Images for Avatar Selection Options and as default display when not talking ---
 import avatarFemaleAdultPng from './assets/3.png'; // Adult Female PNG
 import avatarMaleAdultPng from './assets/2.png';  // Adult Male PNG
@@ -134,27 +134,19 @@ function Questionnaire() {
     }
   }, [selectedAvatar, languageSelected, formStarted]);
 
-  useEffect(() => {
-    const questionData = async () => {
-      try {
-        // Fetch only approved questions for the questionnaire
-        const response = await axios.get(`${API_BASE_URL}/forms/approved-questions?language=${currentLanguage}`);
-        dispatch(addAllQuetions(response.data))
-        console.log('Approved questions loaded:', response.data);
-      } catch (error) {
-        console.error('Error fetching approved questions:', error);
-        // Fallback to admin endpoint if needed
-        try {
-          const fallbackResponse = await axios.get(`${API_BASE_URL}/admin/questions`);
-          const approvedQuestions = fallbackResponse.data.filter(q => q.is_approved && q.status === 'approved');
-          dispatch(addAllQuetions(approvedQuestions));
-        } catch (fallbackError) {
-          console.error('Fallback also failed:', fallbackError);
-        }
-      }
-    };
-    questionData();
-  }, [currentLanguage, dispatch]);
+  // Questions are now loaded through the session, not separately
+  // useEffect(() => {
+  //   const questionData = async () => {
+  //     try {
+  //       const response = await axios.get(`${API_BASE_URL}/forms/approved-questions?language=${currentLanguage}`);
+  //       dispatch(addAllQuetions(response.data))
+  //       console.log('Approved questions loaded:', response.data);
+  //     } catch (error) {
+  //       console.error('Error fetching approved questions:', error);
+  //     }
+  //   };
+  //   questionData();
+  // }, [currentLanguage, dispatch]);
 
 
   // --- Google TTS speakText function ---
@@ -499,7 +491,9 @@ function Questionnaire() {
  
     try {
       const response = await fetch(`${API_BASE_URL}/start-session`, {
-        method: 'POST'
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: currentLanguage })
       });
       if (!response.ok) throw new Error('Failed to start session');
       const data = await response.json();
@@ -597,8 +591,8 @@ function Questionnaire() {
         const firstQuestionId = questionIds[0]; // Get the actual ID
         const firstQuestionData = storedResponses[firstQuestionId]; // Get data using the ID
         setCurrentQuestionData({ id: firstQuestionId, question: firstQuestionData.question });
-        setAssistantMessage(`Okay, let's review. Question ${parseInt(firstQuestionId) + 1}: ${firstQuestionData.question}. Your current answer is "${firstQuestionData.answer}". Do you want to change it?`);
-        await speakText(`Okay, let's review. Question ${parseInt(firstQuestionId) + 1}: ${firstQuestionData.question}. Your current answer is "${firstQuestionData.answer}". Do you want to change it?`, () => {
+        setAssistantMessage(`Okay, let's review. Question 1: ${firstQuestionData.question}. Your current answer is "${firstQuestionData.answer}". Do you want to change it?`);
+        await speakText(`Okay, let's review. Question 1: ${firstQuestionData.question}. Your current answer is "${firstQuestionData.answer}". Do you want to change it?`, () => {
             if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
                 recognitionRef.current.startListeningDirectly();
             }
@@ -620,8 +614,8 @@ function Questionnaire() {
         const nextQuestionId = questionIds[nextIndex];
         const nextQuestionData = storedResponses[nextQuestionId];
         setCurrentQuestionData({ id: nextQuestionId, question: nextQuestionData.question });
-        setAssistantMessage(`Next question, number ${parseInt(nextQuestionId) + 1}: ${nextQuestionData.question}. Your current answer is "${nextQuestionData.answer}". Do you want to change it?`);
-        await speakText(`Next question, number ${parseInt(nextQuestionId) + 1}: ${nextQuestionData.question}. Your current answer is "${nextQuestionData.answer}". Do you want to change it?`, () => {
+        setAssistantMessage(`Next question, number ${nextIndex + 1}: ${nextQuestionData.question}. Your current answer is "${nextQuestionData.answer}". Do you want to change it?`);
+        await speakText(`Next question, number ${nextIndex + 1}: ${nextQuestionData.question}. Your current answer is "${nextQuestionData.answer}". Do you want to change it?`, () => {
             if (recognitionRef.current && recognitionRef.current.startListeningDirectly) {
                 recognitionRef.current.startListeningDirectly();
             }
@@ -739,9 +733,9 @@ function Questionnaire() {
  
                 <h3>Your Current Responses:</h3>
                 <ul style={{ maxHeight: '200px', overflowY: 'auto', border: '1px solid #ccc', padding: '10px', borderRadius: '5px', backgroundColor: '#f9f9f9' }}>
-                    {Object.entries(storedResponses).map(([id, data]) => (
+                    {Object.entries(storedResponses).map(([id, data], index) => (
                         <li key={id} style={{ marginBottom: '5px' }}>
-                            <strong>Q{parseInt(id) + 1}:</strong> "{data.question}" - Answer: "<strong>{data.answer}</strong>"
+                            <strong>Q{index + 1}:</strong> "{data.question}" - Answer: "<strong>{data.answer}</strong>"
                         </li>
                     ))}
                 </ul>
@@ -760,7 +754,7 @@ function Questionnaire() {
                 <h2>Reviewing Responses</h2>
                 {currentQuestionData ? (
                     <>
-                        <p>Currently reviewing: **Question {parseInt(currentQuestionData.id) + 1}:** "{currentQuestionData.question}"</p>
+                        <p>Currently reviewing: **Question {currentReviewIndex + 1}:** "{currentQuestionData.question}"</p>
                         <p>Your current answer: "<strong>{storedResponses[currentQuestionData.id]?.answer}</strong>"</p>
                         <p>Do you want to change this answer? Speak or type your new response, or say "No" to keep it as is.</p>
                     </>
@@ -856,9 +850,9 @@ function Questionnaire() {
             <hr/>
             <h3>Final Submitted Responses:</h3>
             <ul>
-              {Object.entries(storedResponses).map(([id, data]) => (
+              {Object.entries(storedResponses).map(([id, data], index) => (
                 <li key={id}>
-                  <strong>Q{parseInt(id) + 1}:</strong> "{data.question}" - Answered: "<strong>{data.answer}</strong>" (Heard: "{data.rawTranscript}")
+                  <strong>Q{index + 1}:</strong> "{data.question}" - Answered: "<strong>{data.answer}</strong>" (Heard: "{data.rawTranscript}")
                 </li>
               ))}
             </ul>
@@ -882,7 +876,7 @@ function App() {
     <Router>
       <Routes>
         <Route path="/" element={<Questionnaire />} />
-        <Route path="/admin" element={<Admin />} />
+        <Route path="/admin" element={<AdminNew />} />
       </Routes>
     </Router>
   );
