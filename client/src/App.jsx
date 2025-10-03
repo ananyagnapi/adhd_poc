@@ -325,7 +325,7 @@ function Questionnaire() {
       setAssistantMessage(translatedMessage);
 
       // Handle state updates immediately
-      if (awaitingConfirmation && normalizedAction !== 'confirm_answer') {
+      if (awaitingConfirmation && normalizedAction !== 'confirm_answer' && normalizedAction !== 'clarify_and_confirm') {
           setAwaitingConfirmation(false);
       }
 
@@ -347,7 +347,7 @@ function Questionnaire() {
         setReviewingResponses(false);
         setShowFinalConfirmation(false);
         setFinalSubmissionConfirmed(false);
-      } else if (normalizedAction === 'confirm_answer' && data.predictedOption) {
+      } else if ((normalizedAction === 'confirm_answer' || normalizedAction === 'clarify_and_confirm') && data.predictedOption) {
         setPredictedOption(data.predictedOption);
         setAwaitingConfirmation(true);
       } else if (normalizedAction === 'complete') {
@@ -382,7 +382,7 @@ function Questionnaire() {
         if (recognitionRef.current && recognitionRef.current.startListeningDirectly && 
             (normalizedAction === 'ask_readiness' || normalizedAction === 'ask_question' || 
              normalizedAction === 're_ask' || normalizedAction === 'confirm_answer' || 
-             normalizedAction === 'clarify')) {
+             normalizedAction === 'clarify_and_confirm' || normalizedAction === 'clarify')) {
           recognitionRef.current.startListeningDirectly();
         }
       }, 1000);
@@ -791,16 +791,19 @@ function Questionnaire() {
                 </div>
  
                 <div className="button-group" style={{marginTop: '20px'}}>
-                    <button onClick={handleNextReviewQuestion} disabled={isSpeaking || !currentQuestionData}>
-                        {currentReviewIndex < Object.keys(storedResponses).length - 1 ? "Next Question to Review" : "Finished Reviewing"}
-                    </button>
+                    {currentQuestionData && (
+                        <button onClick={handleNextReviewQuestion} disabled={isSpeaking}>
+                            {currentReviewIndex < Object.keys(storedResponses).length - 1 ? "Next Question" : "Finish Review"}
+                        </button>
+                    )}
                     <button onClick={async () => {
                         setReviewingResponses(false);
-                        setShowFinalConfirmation(true); // Go back to the main final confirmation screen
-                        setAssistantMessage("Okay, you're back at the final submission review. Are you ready to submit, or want to review again?");
-                        await speakText("Okay, you're back at the final submission review. Are you ready to submit, or want to review again?");
+                        setShowFinalConfirmation(true);
+                        setCurrentQuestionData(null);
+                        setAssistantMessage("Ready to submit your responses?");
+                        await speakText("Ready to submit your responses?");
                     }} disabled={isSpeaking}>
-                        Back to Final Review
+                        Done Reviewing - Submit
                     </button>
                 </div>
             </div>
