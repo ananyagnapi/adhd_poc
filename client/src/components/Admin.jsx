@@ -570,7 +570,7 @@ const Admin = () => {
                 </button>
               </div>
             )}
-            <div className="questionnaire-controls">
+            {/* <div className="questionnaire-controls">
               <button 
                 type="button" 
                 onClick={() => {
@@ -583,7 +583,7 @@ const Admin = () => {
               >
                 New Questionnaire
               </button>
-            </div>
+            </div> */}
           </div>
 
           <form onSubmit={(e) => e.preventDefault()}>

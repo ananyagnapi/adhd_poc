@@ -27,6 +27,8 @@ function AdminNew() {
   const [selectedQuestionnaire, setSelectedQuestionnaire] = useState(null);
   const [questionnaireQuestions, setQuestionnaireQuestions] = useState([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [reviewMode, setReviewMode] = useState(false);
 
   const menuItems = [
     { id: 'users', label: 'Users', icon: '👥' },
@@ -210,8 +212,146 @@ function AdminNew() {
     </div>
   );
 
+  const QuestionReviewMode = () => {
+    const groupedQuestions = groupQuestionsByQuestionnaire(questionnaireQuestions);
+    const questionGroups = Object.entries(groupedQuestions);
+    const currentGroup = questionGroups[currentQuestionIndex];
+    
+    if (!currentGroup) {
+      return (
+        <div className="panel">
+          <div className="panel-header">
+            <button className="back-button" onClick={() => setReviewMode(false)}>
+              ← Back to Details
+            </button>
+            <h1>Review Complete</h1>
+          </div>
+          <div className="review-complete">
+            <p>All questions have been reviewed!</p>
+            <button className="btn-primary" onClick={() => setReviewMode(false)}>
+              Back to Questionnaire
+            </button>
+          </div>
+        </div>
+      );
+    }
+    
+    const [qid, questionGroup] = currentGroup;
+    
+    return (
+      <div className="panel">
+        <div className="panel-header">
+          <div className="panel-title-section">
+            <button className="back-button" onClick={() => setReviewMode(false)}>
+              ← Back to Details
+            </button>
+            <h1>Review Question {currentQuestionIndex + 1} of {questionGroups.length}</h1>
+            <p>Review and approve translations for this question</p>
+          </div>
+        </div>
+        
+        <div className="question-review-container">
+          <div className="question-group-card">
+            <div className="question-group-header">
+              <h3>Question Group</h3>
+              <span className="group-id">ID: {qid}</span>
+            </div>
+            
+            <div className="translations-container">
+              {questionGroup.map((question) => (
+                <div key={question._id} className="translation-card">
+                  <div className="translation-header">
+                    <div className="language-info">
+                      <span className="language-badge">{question.language.toUpperCase()}</span>
+                      <span className={`status-badge ${question.status}`}>
+                        {question.status}
+                      </span>
+                    </div>
+                    <span className={`type-badge ${question.question_type}`}>
+                      {question.question_type}
+                    </span>
+                  </div>
+                  
+                  <div className="translation-content">
+                    <p className="question-text">{question.question_text}</p>
+                    
+                    {question.options && question.options.length > 0 && (
+                      <div className="question-options">
+                        <span className="options-label">Options:</span>
+                        <div className="options-list">
+                          {question.options.map((option, idx) => (
+                            <span key={idx} className="option-tag">{option}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  <div className="translation-actions">
+                    {question.status !== 'approved' && (
+                      <button 
+                        className="btn-approve"
+                        onClick={() => approveQuestion(question._id)}
+                      >
+                        ✓ Approve
+                      </button>
+                    )}
+                    <button 
+                      className="btn-icon"
+                      onClick={() => editQuestion(question)}
+                      title="Edit Question"
+                    >
+                      ✏️
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          
+          <div className="review-navigation">
+            <button 
+              className="btn-secondary"
+              onClick={() => setCurrentQuestionIndex(Math.max(0, currentQuestionIndex - 1))}
+              disabled={currentQuestionIndex === 0}
+            >
+              ← Previous Question
+            </button>
+            
+            <span className="question-counter">
+              {currentQuestionIndex + 1} / {questionGroups.length}
+            </span>
+            
+            {currentQuestionIndex < questionGroups.length - 1 ? (
+              <button 
+                className="btn-primary"
+                onClick={() => setCurrentQuestionIndex(currentQuestionIndex + 1)}
+              >
+                Next Question →
+              </button>
+            ) : (
+              <button 
+                className="btn-success"
+                onClick={() => {
+                  alert('All questions reviewed successfully!');
+                  setReviewMode(false);
+                }}
+              >
+                ✓ Submit All
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const QuestionnaireDetails = () => {
     const groupedQuestions = groupQuestionsByQuestionnaire(questionnaireQuestions);
+    
+    if (reviewMode) {
+      return <QuestionReviewMode />;
+    }
     
     return (
       <div className="panel">
@@ -226,20 +366,32 @@ function AdminNew() {
             <h1>{selectedQuestionnaire?.title}</h1>
             <p>Questions with translations and approval status</p>
           </div>
-          <button 
-            className="btn-primary"
-            onClick={() => {
-              // Only set questionnaire context, not form - let backend handle form lookup
-              const firstQuestion = questionnaireQuestions[0];
-              if (firstQuestion?.questionnaire_id) {
-                localStorage.setItem('currentQuestionnaireId', firstQuestion.questionnaire_id);
-                localStorage.removeItem('currentFormId'); // Remove form_id to let backend use questionnaire's form
-              }
-              setShowCreateForm(true);
-            }}
-          >
-            + Add Question
-          </button>
+          <div className="header-actions">
+            <button 
+              className="btn-secondary"
+              onClick={() => {
+                setReviewMode(true);
+                setCurrentQuestionIndex(0);
+              }}
+              disabled={Object.keys(groupedQuestions).length === 0}
+            >
+              📋 Review Questions
+            </button>
+            <button 
+              className="btn-primary"
+              onClick={() => {
+                // Only set questionnaire context, not form - let backend handle form lookup
+                const firstQuestion = questionnaireQuestions[0];
+                if (firstQuestion?.questionnaire_id) {
+                  localStorage.setItem('currentQuestionnaireId', firstQuestion.questionnaire_id);
+                  localStorage.removeItem('currentFormId'); // Remove form_id to let backend use questionnaire's form
+                }
+                setShowCreateForm(true);
+              }}
+            >
+              + Add Question
+            </button>
+          </div>
         </div>
 
         {loading ? (
