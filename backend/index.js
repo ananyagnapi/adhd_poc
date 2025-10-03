@@ -552,9 +552,10 @@ If not ready, return:
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Okay.", "Got it."). The backend will append the next question.
                 - "complete": If the user's input clearly indicates one of the fixed options, and this is the LAST question. Current question is ${actualQuestionIndex + 1} of ${questions.length} total questions. ONLY use "complete" if ${actualQuestionIndex + 1} equals ${questions.length}.
                     The "assistantMessage" should be a *simple acknowledgement* (e.g., "Understood.", "Great."). The backend will generate the completion message.
-                - "clarify_and_confirm": If the input is vague or could refer to multiple options, infer the most likely option.
-                    The assistantMessage should then ask for confirmation of the inferred option AND provide the list of options for clarity.
-                    (e.g., "I think you mean [Inferred Option]. Is that correct (yes/no), or would you like to choose from ${currentQuestionObj.options.join(', ')}?").
+                - "clarify_and_confirm": If the input is vague, ambiguous, or could refer to multiple options (e.g., "sometimes", "maybe", "kind of", "sort of", "I guess", "not sure", "a little", "somewhat", "occasionally", "it depends"), infer the most likely option based on context.
+                    The assistantMessage should ask for confirmation of the inferred option AND provide the complete list of options for clarity.
+                    Format: "I think you mean '[Inferred Option]'. Is that correct? Please say 'yes' to confirm, or choose from: ${currentQuestionObj.options.join(', ')}."
+                    IMPORTANT: Always set predictedOption to your inferred choice.
                 - "repeat_question_gemini_detected": If the user's input clearly asks to repeat the question (e.g., "repeat that", "say it again", "what was the question?", "can you repeat?").
                     The "assistantMessage" should be a confirmation (e.g., "Certainly, here is the question again." or "No problem, listening again for this question.").
                 - "clarify": If the input is completely irrelevant, uninterpretable, or asks a non-explanation related question that is *not* a repeat request, ask for clarification by prompting them to choose from the given options or rephrase their answer.`;
@@ -667,14 +668,24 @@ If not ready, return:
                 session.currentQuestionIndex = questions.length;
                 assistantMessage = "You've completed the questionnaire! I'm now summarizing your responses."; // Final message handled below
  
-            } else if (actionToFrontend === 'clarify_and_confirm' || actionToFrontend === 'clarify' || actionToFrontend === 'repeat_question_gemini_detected') {
-                // For these actions, we remain on the current question
-                // currentQuestionObj already holds the correct question being discussed
+            } else if (actionToFrontend === 'clarify_and_confirm') {
+                // For clarify_and_confirm, we stay on current question and set up confirmation flow
                 questionIdToFrontend = currentQuestionObj.id;
-                currentQuestionIndex = actualQuestionIndex; // Ensure index reflects current question
-                session.currentQuestionIndex = actualQuestionIndex; // Update session
+                currentQuestionIndex = actualQuestionIndex;
+                session.currentQuestionIndex = actualQuestionIndex;
                 session.lastQuestionOptions = currentQuestionObj.options;
-                nextQuestionText = currentQuestionObj.question; // Repeat the question text for re_ask/clarify
+                nextQuestionText = currentQuestionObj.question;
+                // Use the AI's message directly as it contains the confirmation request
+                assistantMessage = geminiAssistantMessage;
+                // The frontend will handle this as a confirmation request
+                
+            } else if (actionToFrontend === 'clarify' || actionToFrontend === 'repeat_question_gemini_detected') {
+                // For these actions, we remain on the current question
+                questionIdToFrontend = currentQuestionObj.id;
+                currentQuestionIndex = actualQuestionIndex;
+                session.currentQuestionIndex = actualQuestionIndex;
+                session.lastQuestionOptions = currentQuestionObj.options;
+                nextQuestionText = currentQuestionObj.question;
                 const questionNumber = actualQuestionIndex + 1;
                 if (currentQuestionObj.type === 'freetext') {
                     assistantMessage = `${geminiAssistantMessage} Question ${questionNumber}: ${nextQuestionText}. Please provide your answer in your own words.`;
