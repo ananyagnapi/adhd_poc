@@ -5,6 +5,18 @@ import './AdminNew.css';
 
 const API_BASE_URL = 'http://localhost:3001/api';
 
+// Test API connection on component load
+const testAPIConnection = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/admin/questions`);
+    console.log('✅ API connection test successful:', response.status);
+    return true;
+  } catch (error) {
+    console.error('❌ API connection test failed:', error);
+    return false;
+  }
+};
+
 function AdminNew() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activePanel, setActivePanel] = useState('users');
@@ -24,6 +36,9 @@ function AdminNew() {
   ];
 
   useEffect(() => {
+    // Test API connection first
+    testAPIConnection();
+    
     if (activePanel === 'questionnaires') {
       fetchQuestionnaires();
     } else if (activePanel === 'questions') {
@@ -32,6 +47,11 @@ function AdminNew() {
       fetchUsers();
     }
   }, [activePanel]);
+
+  // Test API connection on component mount
+  useEffect(() => {
+    testAPIConnection();
+  }, []);
 
   const fetchQuestionnaires = async () => {
     try {
@@ -103,11 +123,16 @@ function AdminNew() {
         <div className="panel-title-section">
           <button 
             className="back-button"
-            onClick={() => setShowCreateForm(false)}
+            onClick={() => {
+              setShowCreateForm(false);
+              // Clear localStorage when going back
+              localStorage.removeItem('currentFormId');
+              localStorage.removeItem('currentQuestionnaireId');
+            }}
           >
-            ← Back to Questionnaires
+            ← Back to {selectedQuestionnaire ? 'Questionnaire Details' : 'Questionnaires'}
           </button>
-          <h1>Create New Questionnaire</h1>
+          <h1>{selectedQuestionnaire ? 'Add Question to Questionnaire' : 'Create New Questionnaire'}</h1>
           <p>Add questions with automatic translation to all languages</p>
         </div>
       </div>
@@ -201,6 +226,20 @@ function AdminNew() {
             <h1>{selectedQuestionnaire?.title}</h1>
             <p>Questions with translations and approval status</p>
           </div>
+          <button 
+            className="btn-primary"
+            onClick={() => {
+              // Only set questionnaire context, not form - let backend handle form lookup
+              const firstQuestion = questionnaireQuestions[0];
+              if (firstQuestion?.questionnaire_id) {
+                localStorage.setItem('currentQuestionnaireId', firstQuestion.questionnaire_id);
+                localStorage.removeItem('currentFormId'); // Remove form_id to let backend use questionnaire's form
+              }
+              setShowCreateForm(true);
+            }}
+          >
+            + Add Question
+          </button>
         </div>
 
         {loading ? (
@@ -258,8 +297,20 @@ function AdminNew() {
                               ✓ Approve
                             </button>
                           )}
-                          <button className="btn-icon">✏️</button>
-                          <button className="btn-icon delete">🗑️</button>
+                          <button 
+                            className="btn-icon"
+                            onClick={() => editQuestion(question)}
+                            title="Edit Question"
+                          >
+                            ✏️
+                          </button>
+                          <button 
+                            className="btn-icon delete"
+                            onClick={() => deleteQuestion(question)}
+                            title="Delete Question"
+                          >
+                            🗑️
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -312,8 +363,14 @@ function AdminNew() {
                   View Details
                 </button>
                 <div className="action-buttons">
-                  <button className="btn-icon">✏️</button>
-                  <button className="btn-icon delete">🗑️</button>
+                  <button className="btn-icon" title="Edit Questionnaire">✏️</button>
+                  <button 
+                    className="btn-icon delete" 
+                    onClick={() => deleteQuestionnaire(questionnaire)}
+                    title="Delete Questionnaire"
+                  >
+                    🗑️
+                  </button>
                 </div>
               </div>
             </div>
@@ -331,9 +388,154 @@ function AdminNew() {
       // Refresh questions after approval
       if (selectedQuestionnaire) {
         fetchQuestionnaireQuestions(selectedQuestionnaire._id);
+      } else {
+        fetchQuestions();
       }
     } catch (error) {
       console.error('Error approving question:', error);
+      alert('Failed to approve question. Please try again.');
+    }
+  };
+
+  const editQuestion = (question) => {
+    // For now, show an alert with the question details
+    // In a full implementation, this would open an edit modal
+    const newText = prompt('Edit question text:', question.question_text);
+    if (newText && newText.trim() !== question.question_text) {
+      updateQuestion(question._id, newText.trim(), question.question_type, question.options || []);
+    }
+  };
+
+  const updateQuestion = async (questionId, questionText, questionType, options) => {
+    try {
+      console.log('Updating question:', { questionId, questionText, questionType, options });
+      
+      const response = await axios.put(`${API_BASE_URL}/admin/questions/${questionId}`, {
+        question_text: questionText,
+        question_type: questionType,
+        options: options,
+        retranslate: true
+      });
+      
+      console.log('Update response:', response.status, response.data);
+      
+      if (response.status === 200) {
+        alert('Question updated successfully!');
+        // Refresh questions
+        if (selectedQuestionnaire) {
+          await fetchQuestionnaireQuestions(selectedQuestionnaire._id);
+        } else {
+          await fetchQuestions();
+        }
+      }
+    } catch (error) {
+      console.error('Error updating question:', error.response?.status, error.response?.data || error.message);
+      alert(`Failed to update question: ${error.response?.data?.error || error.message}`);
+    }
+  };
+
+  const deleteQuestionnaire = async (questionnaire) => {
+    if (!confirm(`Are you sure you want to delete the questionnaire "${questionnaire.title}" and ALL its questions?\n\nThis action cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      console.log('Deleting questionnaire:', questionnaire);
+      
+      // First delete the questionnaire/form
+      const response = await axios.delete(`${API_BASE_URL}/forms/${questionnaire._id}`);
+      console.log('✅ Questionnaire deleted:', response.status);
+      
+      // Refresh questionnaires list
+      await fetchQuestionnaires();
+      alert('Questionnaire deleted successfully!');
+      
+    } catch (error) {
+      console.error('❌ Failed to delete questionnaire:', error);
+      
+      if (error.response) {
+        alert(`Delete failed: ${error.response.status} - ${error.response.data?.error || 'Server error'}`);
+      } else if (error.request) {
+        alert('Delete failed: No response from server. Check if backend is running.');
+      } else {
+        alert(`Delete failed: ${error.message}`);
+      }
+    }
+  };
+
+  const deleteQuestion = async (question) => {
+    if (!confirm(`Are you sure you want to delete this question in ALL languages?\n\n"${question.question_text}"\n\nThis action cannot be undone.`)) {
+      return;
+    }
+
+    console.log('Delete initiated for question:', question);
+    console.log('All available questions:', questions);
+    console.log('API_BASE_URL:', API_BASE_URL);
+
+    try {
+      // First, let's try deleting just the single question to test
+      console.log(`Testing delete for single question: ${question._id}`);
+      
+      try {
+        const testResponse = await axios.delete(`${API_BASE_URL}/admin/questions/${question._id}`);
+        console.log('✅ Single question delete test successful:', testResponse.status, testResponse.data);
+        
+        // If single delete works, proceed with all language versions
+        const questionsToDelete = questions.filter(q => q.questionnaire_id === question.questionnaire_id && q._id !== question._id);
+        
+        console.log(`Found ${questionsToDelete.length} additional questions to delete with questionnaire_id: ${question.questionnaire_id}`);
+        
+        let successCount = 1; // Already deleted one
+        let failCount = 0;
+        
+        // Delete remaining questions
+        for (const q of questionsToDelete) {
+          try {
+            console.log(`Deleting question ${q._id} (${q.language}): ${q.question_text}`);
+            const response = await axios.delete(`${API_BASE_URL}/admin/questions/${q._id}`);
+            console.log(`✅ Successfully deleted question ${q._id}:`, response.status);
+            successCount++;
+          } catch (error) {
+            console.error(`❌ Failed to delete question ${q._id}:`, error.response?.status, error.response?.data || error.message);
+            failCount++;
+          }
+        }
+        
+        // Refresh questions
+        if (selectedQuestionnaire) {
+          await fetchQuestionnaireQuestions(selectedQuestionnaire._id);
+        } else {
+          await fetchQuestions();
+        }
+        
+        if (failCount === 0) {
+          alert(`Successfully deleted all ${successCount} questions in all languages`);
+        } else {
+          alert(`Deleted ${successCount} questions successfully, but ${failCount} failed. Check console for details.`);
+        }
+        
+      } catch (testError) {
+        console.error('❌ Single question delete test failed:', testError);
+        
+        if (testError.response) {
+          // Server responded with error status
+          console.error('Response status:', testError.response.status);
+          console.error('Response data:', testError.response.data);
+          alert(`Delete failed: ${testError.response.status} - ${testError.response.data?.error || 'Server error'}`);
+        } else if (testError.request) {
+          // Request was made but no response received
+          console.error('No response received:', testError.request);
+          alert('Delete failed: No response from server. Check if backend is running.');
+        } else {
+          // Something else happened
+          console.error('Request setup error:', testError.message);
+          alert(`Delete failed: ${testError.message}`);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Error in deleteQuestion function:', error);
+      alert(`Error deleting questions: ${error.message}. Check console for details.`);
     }
   };
 
@@ -419,8 +621,20 @@ function AdminNew() {
                             ✓ Approve
                           </button>
                         )}
-                        <button className="btn-icon">✏️</button>
-                        <button className="btn-icon delete">🗑️</button>
+                        <button 
+                          className="btn-icon"
+                          onClick={() => editQuestion(question)}
+                          title="Edit Question"
+                        >
+                          ✏️
+                        </button>
+                        <button 
+                          className="btn-icon delete"
+                          onClick={() => deleteQuestion(question)}
+                          title="Delete Question"
+                        >
+                          🗑️
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -438,7 +652,13 @@ function AdminNew() {
       case 'users':
         return <UsersPanel />;
       case 'questionnaires':
-        return selectedQuestionnaire ? <QuestionnaireDetails /> : showCreateForm ? <CreateQuestionnaireForm /> : <QuestionnairesPanel />;
+        if (showCreateForm) {
+          return <CreateQuestionnaireForm />;
+        } else if (selectedQuestionnaire) {
+          return <QuestionnaireDetails />;
+        } else {
+          return <QuestionnairesPanel />;
+        }
       case 'settings':
         return (
           <div className="panel center">

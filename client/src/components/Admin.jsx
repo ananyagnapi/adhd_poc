@@ -46,6 +46,9 @@ const Admin = () => {
   // Get questions from Redux store
   const allQuestions = useSelector((state) => state.quetion.quetionData) || [];
   const dispatch = useDispatch();
+  
+  // Debug Redux state
+  console.log('Current Redux questions state:', allQuestions);
 
   // Detect language when question text changes
   useEffect(() => {
@@ -85,16 +88,26 @@ const Admin = () => {
 
   const fetchQuestions = async () => {
     try {
+      console.log('Fetching questions from:', `${API_BASE_URL}/admin/questions`);
       const response = await fetch(`${API_BASE_URL}/admin/questions`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
       const data = await response.json();
+      console.log('Fetched questions data:', data);
       
       // Dispatch action to update Redux store
       dispatch({ 
         type: 'quetionData/addAllQuetions', 
         payload: data 
       });
+      
+      console.log('Questions dispatched to Redux store');
     } catch (error) {
       console.error('Error fetching questions:', error);
+      alert(`Failed to fetch questions: ${error.message}`);
     }
   };
 
@@ -221,6 +234,9 @@ const Admin = () => {
     e.preventDefault();
     setLoading(true);
 
+    console.log('Submit initiated with editingId:', editingId);
+    console.log('Current form state:', newQuestion);
+
     try {
       let url, method, requestBody;
       
@@ -228,8 +244,10 @@ const Admin = () => {
         // HANDLE UPDATE: Find the question being edited to get its details
         const currentQuestion = allQuestions.find(q => q._id === editingId);
         
+        console.log('Found current question for editing:', currentQuestion);
+        
         if (!currentQuestion) {
-          alert('Question not found');
+          alert('Question not found. Please refresh the page and try again.');
           setLoading(false);
           return;
         }
@@ -280,12 +298,23 @@ const Admin = () => {
         url = `${API_BASE_URL}/admin/questions`;
         method = 'POST';
         
+        const currentFormId = localStorage.getItem('currentFormId');
+        const currentQuestionnaireId = localStorage.getItem('currentQuestionnaireId');
+        
         requestBody = {
           title: newQuestion.title || 'Default Questionnaire',
           question: newQuestion.question || '',
           type: newQuestion.type || 'options',
-          options: newQuestion.type === 'options' ? (newQuestion.options || []) : []
+          options: newQuestion.type === 'options' ? (newQuestion.options || []) : [],
+          form_id: currentFormId,
+          questionnaire_id: currentQuestionnaireId
         };
+        
+        console.log('Using localStorage values:', {
+          currentFormId,
+          currentQuestionnaireId,
+          willCreateNewQuestionnaire: !currentQuestionnaireId
+        });
 
         // Ensure question is not empty
         if (!requestBody.question.trim()) {
@@ -301,6 +330,8 @@ const Admin = () => {
         });
       }
       
+      console.log('Making request to:', url, 'with method:', method);
+      
       const response = await fetch(url, {
         method: method,
         headers: { 
@@ -310,10 +341,21 @@ const Admin = () => {
         body: JSON.stringify(requestBody)
       });
 
+      console.log('Response received:', response.status, response.statusText);
+      
       const responseData = await response.json();
+      console.log('Response data:', responseData);
 
       if (response.ok) {
         console.log('Success:', responseData);
+        
+        // Store form and questionnaire IDs for reuse
+        if (!editingId && responseData.form_id) {
+          localStorage.setItem('currentFormId', responseData.form_id);
+        }
+        if (!editingId && responseData.questionnaire_id) {
+          localStorage.setItem('currentQuestionnaireId', responseData.questionnaire_id);
+        }
         
         // Refresh questions to show all updates
         await fetchQuestions();
@@ -363,17 +405,37 @@ const Admin = () => {
   };
 
   const handleEditTranslation = (question, language) => {
+    console.log('Editing translation for question:', question, 'Language:', language);
+  
+    setNewQuestion({
+      title: question.title || 'Default Questionnaire',
+      question: question.question_text || '',
+      type: question.question_type || 'options',
+      options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
+    });
     
-     console.log('Editing question:', question);
-  
-  setNewQuestion({
-    title: question.title || 'Default Questionnaire',  // <- Use question's title from backend
-    question: question.question_text || '',
-    type: question.question_type || 'options',
-    options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
-  });
-  setEditingId(question._id);
-  
+    // Set editing ID to the actual question document ID
+    setEditingId(question._id);
+    
+    console.log('Edit translation state set:', {
+      editingId: question._id,
+      language: language,
+      questionText: question.question_text,
+      questionType: question.question_type,
+      options: question.options
+    });
+  };
+
+  const handleEdit = (question) => {
+    console.log('Editing question:', question);
+    
+    // Set form state with the question data
+    setNewQuestion({
+      title: newQuestion.title,
+      question: question.question_text || '',
+      type: question.question_type || 'options',
+      options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
+    });
     
     // Set editing ID to the actual question document ID
     setEditingId(question._id);
@@ -386,40 +448,35 @@ const Admin = () => {
     });
   };
 
-  const handleEdit = (question) => {
-    console.log('Editing question:', question);
-    
-     // Set form state with the question data
-  setNewQuestion({
-    title: newQuestion.title,  // <- This also keeps current title
-    question: question.question_text || '',
-    type: question.question_type || 'options',
-    options: question.options || ['Never', 'Rarely', 'Sometimes', 'Often', 'Very Often']
-  });
-    
-    console.log('Edit state set:', {
-      editingId: question._id,
-      questionText: question.question_text,
-      questionType: question.question_type,
-      options: question.options
-    });
-  };
-
   const handleDelete = async (question) => {
     if (!confirm('Are you sure you want to delete this question in ALL languages? This action cannot be undone.')) return;
+
+    console.log('Delete initiated for question:', question);
+    console.log('All questions available:', allQuestions);
 
     try {
       // Get all questions with the same qid (questionnaire ID)
       const questionsToDelete = allQuestions.filter(q => q.qid === question.qid);
       
       console.log(`Deleting ${questionsToDelete.length} questions with qid: ${question.qid}`);
+      console.log('Questions to delete:', questionsToDelete.map(q => ({ id: q._id, lang: q.language, text: q.question_text })));
+      
+      if (questionsToDelete.length === 0) {
+        alert('No questions found to delete. Please refresh the page and try again.');
+        return;
+      }
       
       // Delete each question individually using existing endpoint
-      const deletePromises = questionsToDelete.map(q => 
-        fetch(`${API_BASE_URL}/admin/questions/${q._id}`, {
-          method: 'DELETE'
-        })
-      );
+      const deletePromises = questionsToDelete.map(q => {
+        const url = `${API_BASE_URL}/admin/questions/${q._id}`;
+        console.log(`Deleting question at: ${url}`);
+        return fetch(url, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+      });
 
       const responses = await Promise.all(deletePromises);
       
@@ -428,30 +485,39 @@ const Admin = () => {
       let failCount = 0;
       
       for (let i = 0; i < responses.length; i++) {
-        if (responses[i].ok) {
+        const response = responses[i];
+        const question = questionsToDelete[i];
+        
+        if (response.ok) {
           successCount++;
+          console.log(`✅ Successfully deleted question ${question._id} (${question.language})`);
         } else {
           failCount++;
-          console.error(`Failed to delete question ${questionsToDelete[i]._id}:`, responses[i].status);
+          const errorText = await response.text();
+          console.error(`❌ Failed to delete question ${question._id} (${question.language}):`, {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorText
+          });
         }
       }
       
-      console.log(`Successfully deleted ${successCount} questions, ${failCount} failed`);
+      console.log(`Delete summary: ${successCount} successful, ${failCount} failed`);
       
       if (successCount > 0) {
         await fetchQuestions();
         
         if (failCount === 0) {
-          console.log(`Successfully deleted all ${successCount} questions in all languages`);
+          alert(`Successfully deleted all ${successCount} questions in all languages`);
         } else {
           alert(`Deleted ${successCount} questions successfully, but ${failCount} failed. Please refresh and try again for any remaining questions.`);
         }
       } else {
-        alert('Failed to delete any questions. Please try again.');
+        alert('Failed to delete any questions. Please check the console for details and try again.');
       }
     } catch (error) {
       console.error('Error deleting questions:', error);
-      alert('Error deleting questions. Please try again.');
+      alert(`Error deleting questions: ${error.message}. Please check the console for details.`);
     }
   };
 
@@ -504,6 +570,20 @@ const Admin = () => {
                 </button>
               </div>
             )}
+            <div className="questionnaire-controls">
+              <button 
+                type="button" 
+                onClick={() => {
+                  localStorage.removeItem('currentFormId');
+                  localStorage.removeItem('currentQuestionnaireId');
+                  alert('Started new questionnaire. Next question will create a new form.');
+                }} 
+                className="new-questionnaire-btn"
+                title="Start a new questionnaire"
+              >
+                New Questionnaire
+              </button>
+            </div>
           </div>
 
           <form onSubmit={(e) => e.preventDefault()}>

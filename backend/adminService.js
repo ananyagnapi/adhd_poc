@@ -199,7 +199,7 @@ const adminRoutes = (app) => {
   });
 
   app.post('/api/admin/questions', async (req, res) => {
-    const { title, question, type = 'options', options = [], form_id } = req.body;
+    const { title, question, type = 'options', options = [], form_id, questionnaire_id } = req.body;
     console.log("Request body:", req.body);
 
     if (!question?.trim()) {
@@ -220,15 +220,42 @@ const adminRoutes = (app) => {
             if (!formDoc) {
                 return res.status(400).json({ error: 'Form not found' });
             }
+            console.log(`Using existing form: ${formDoc._id}`);
+        } else if (questionnaire_id) {
+            const existingQuestionnaire = await Questionnaire.findById(questionnaire_id);
+            if (!existingQuestionnaire) {
+                return res.status(400).json({ error: 'Questionnaire not found' });
+            }
+            formDoc = await Form.findById(existingQuestionnaire.form_id);
+            if (!formDoc) {
+                return res.status(400).json({ error: 'Form associated with questionnaire not found' });
+            }
+            console.log(`Using form from existing questionnaire: ${formDoc._id}`);
         } else {
             if (!title?.trim()) {
                 return res.status(400).json({ error: 'Form title is required when creating new form' });
             }
             formDoc = await Form.create({ title: title.trim() });
+            console.log(`Created new form: ${formDoc._id}`);
         }
 
-        const questionnaireDoc = await Questionnaire.create({ form_id: formDoc._id.toString() });
-        const qid = questionnaireDoc._id.toString();
+        // Use existing questionnaire or create new one
+        let qid;
+        
+        if (questionnaire_id) {
+            // Use existing questionnaire - verify it exists
+            const existingQuestionnaire = await Questionnaire.findById(questionnaire_id);
+            if (!existingQuestionnaire) {
+                return res.status(400).json({ error: 'Questionnaire not found' });
+            }
+            qid = questionnaire_id;
+            console.log(`Using existing questionnaire: ${qid}`);
+        } else {
+            // Create new questionnaire only if none specified
+            const newQuestionnaire = await Questionnaire.create({ form_id: formDoc._id.toString() });
+            qid = newQuestionnaire._id.toString();
+            console.log(`Created new questionnaire: ${qid}`);
+        }
 
         const baseQuestionData = {
             question_type: type,

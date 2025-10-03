@@ -1063,6 +1063,51 @@ app.get('/api/forms', async (req, res) => {
     }
 });
 
+// Delete form and all its related data
+app.delete('/api/forms/:formId', async (req, res) => {
+    try {
+        const { formId } = req.params;
+        
+        // Find the form first
+        const form = await Form.findById(formId);
+        if (!form) {
+            return res.status(404).json({ error: 'Form not found' });
+        }
+        
+        // Find all questionnaires for this form
+        const questionnaires = await Questionnaire.find({ form_id: formId });
+        const questionnaireIds = questionnaires.map(q => q._id.toString());
+        
+        // Find all questions for these questionnaires
+        const questions = await Question.find({ questionnaire_id: { $in: questionnaireIds } });
+        const questionIds = questions.map(q => q._id);
+        
+        // Delete all options for these questions
+        const deletedOptions = await Option.deleteMany({ question_id: { $in: questionIds } });
+        
+        // Delete all questions
+        const deletedQuestions = await Question.deleteMany({ questionnaire_id: { $in: questionnaireIds } });
+        
+        // Delete all questionnaires
+        const deletedQuestionnaires = await Questionnaire.deleteMany({ form_id: formId });
+        
+        // Delete the form itself
+        await Form.findByIdAndDelete(formId);
+        
+        res.json({
+            message: 'Form and all related data deleted successfully',
+            deleted_form: form.title,
+            deleted_questionnaires: deletedQuestionnaires.deletedCount,
+            deleted_questions: deletedQuestions.deletedCount,
+            deleted_options: deletedOptions.deletedCount
+        });
+        
+    } catch (error) {
+        console.error('Error deleting form:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // Get approved questions for questionnaire
 app.get('/api/forms/approved-questions', async (req, res) => {
     try {
